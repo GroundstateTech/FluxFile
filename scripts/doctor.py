@@ -16,5 +16,5 @@ except Exception as exc:
 for binary in ("pandoc", "libreoffice", "soffice"):
     print(f"{binary}: {shutil.which(binary) or 'not found'}")
 
-for module in ("PIL", "pandas", "openpyxl", "odf", "pdf2docx"):
+for module in ("PIL", "pandas", "openpyxl", "odf", "xlrd", "pymupdf", "pdf2docx"):
     print(f"{module}: {'OK' if importlib.util.find_spec(module) else 'not installed'}")
