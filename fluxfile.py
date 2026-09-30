@@ -322,10 +322,12 @@ class Engine:
         import pandas as pd
 
         src, dst = source.suffix.lower(), output.suffix.lower()
+        sheets: dict[str, object]
+
         if src == ".csv":
-            df = pd.read_csv(source)
+            sheets = {"Sheet1": pd.read_csv(source)}
         elif src == ".tsv":
-            df = pd.read_csv(source, sep="\t")
+            sheets = {"Sheet1": pd.read_csv(source, sep="\t")}
         elif src == ".json":
             data = json.loads(source.read_text(encoding="utf-8-sig"))
             if isinstance(data, dict) and "rows" in data:
@@ -334,24 +336,53 @@ class Engine:
                 data = [data]
             if not isinstance(data, (list, dict)):
                 raise RuntimeError("JSON table source must contain an object, array, or {'rows': [...]} structure")
-            df = pd.DataFrame(data)
+            sheets = {"Sheet1": pd.DataFrame(data)}
         elif src in {".xlsx", ".xls"}:
-            df = pd.read_excel(source)
+            sheets = pd.read_excel(source, sheet_name=None)
         elif src == ".ods":
-            df = pd.read_excel(source, engine="odf")
+            sheets = pd.read_excel(source, sheet_name=None, engine="odf")
         else:
             raise RuntimeError(f"Unsupported table source: {src}")
 
+        if not sheets:
+            raise RuntimeError("Spreadsheet source contains no readable sheets")
+
+        if dst in {".xlsx", ".ods"}:
+            writer_engine = "odf" if dst == ".ods" else "openpyxl"
+            used_names: set[str] = set()
+
+            def safe_sheet_name(raw_name: object) -> str:
+                name = str(raw_name) or "Sheet"
+                for ch in '[]:*?/\\':
+                    name = name.replace(ch, "_")
+                name = name[:31] or "Sheet"
+                base = name
+                suffix = 2
+                while name in used_names:
+                    marker = f"_{suffix}"
+                    name = f"{base[:31-len(marker)]}{marker}"
+                    suffix += 1
+                used_names.add(name)
+                return name
+
+            with pd.ExcelWriter(output, engine=writer_engine) as writer:
+                for name, df in sheets.items():
+                    df.to_excel(writer, index=False, sheet_name=safe_sheet_name(name))
+            return
+
+        if len(sheets) > 1:
+            raise RuntimeError(
+                f"Workbook contains {len(sheets)} sheets; converting to {dst} would discard data. "
+                "Choose .xlsx or .ods to preserve all sheets."
+            )
+
+        df = next(iter(sheets.values()))
         if dst == ".csv":
             df.to_csv(output, index=False)
         elif dst == ".tsv":
             df.to_csv(output, sep="\t", index=False)
         elif dst == ".json":
             output.write_text(df.to_json(orient="records", indent=2), encoding="utf-8")
-        elif dst == ".xlsx":
-            df.to_excel(output, index=False)
-        elif dst == ".ods":
-            df.to_excel(output, index=False, engine="odf")
         else:
             raise RuntimeError(f"Unsupported table target: {dst}")
 

@@ -17,7 +17,8 @@ Version **0.7.0** is a reliability and bug-hunt release. It keeps the existing c
 - **Run-state protection.** Queue-mutating controls are disabled while a conversion pass is active.
 - **Unique reports.** Report names now include microseconds to avoid same-second collisions.
 - **Faster launchers.** Python dependencies are only reinstalled when `requirements.txt` changes.
-- **Stricter diagnostics and CI.** The doctor can fail on a broken core environment, and CI now tests Python 3.10–3.13 on Ubuntu and Windows plus real conversion smoke tests.
+- **Stricter diagnostics and CI.** The doctor can fail on a broken core environment, and CI tests Python 3.10–3.14 on Ubuntu and Windows plus real conversion smoke tests.
+- **Workbook integrity.** XLS/XLSX/ODS conversions preserve all sheets when targeting XLSX/ODS; FluxFile refuses multi-sheet → CSV/TSV/JSON conversions instead of silently discarding sheets.
 
 ## Conversion planning
 

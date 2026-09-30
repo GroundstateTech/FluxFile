@@ -27,3 +27,6 @@ Reliability / bug-hunt release.
 - Python 3.10–3.13 Ubuntu/Windows CI matrix
 - real CSV/XLSX, JSON/CSV, image, and PDF-text conversion smoke tests
 - EXIF orientation correction before image export
+- multi-sheet XLS/XLSX/ODS preservation when converting between workbook formats
+- explicit refusal to flatten multi-sheet workbooks into CSV/TSV/JSON where sheets would be silently lost
+- Python 3.14 CI coverage
