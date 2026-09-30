@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import csv
 import importlib.util
 import json
+import os
+import queue
 import shutil
 import subprocess
 import sys
@@ -10,17 +13,30 @@ import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 APP_NAME = "FluxFile"
-VERSION = "0.6.0"
+VERSION = "0.7.0"
+MIN_PYTHON = (3, 10)
+SUBPROCESS_TIMEOUT_SECONDS = 300
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
-TABLE_EXTS = {".csv", ".tsv", ".json", ".xlsx", ".ods"}
-PANDOC_EXTS = {".md", ".markdown", ".html", ".htm", ".docx", ".odt", ".rtf", ".epub", ".txt"}
-OFFICE_EXTS = {".doc", ".docx", ".odt", ".rtf", ".xls", ".xlsx", ".ods", ".ppt", ".pptx", ".odp"}
+TABLE_EXTS = {".csv", ".tsv", ".json", ".xls", ".xlsx", ".ods"}
+DOCUMENT_EXTS = {".doc", ".docx", ".odt", ".rtf", ".md", ".markdown", ".html", ".htm", ".txt", ".epub"}
+PRESENTATION_EXTS = {".ppt", ".pptx", ".odp"}
+
+PANDOC_INPUT_EXTS = {".md", ".markdown", ".html", ".htm", ".docx", ".odt", ".epub", ".txt"}
+PANDOC_OUTPUT_EXTS = {".docx", ".odt", ".rtf", ".html", ".md", ".txt", ".epub"}
+
+LIBREOFFICE_DOCUMENT_INPUTS = {".doc", ".docx", ".odt", ".rtf"}
+LIBREOFFICE_DOCUMENT_TARGETS = {".pdf", ".docx", ".odt", ".rtf", ".html", ".txt"}
+LIBREOFFICE_SHEET_INPUTS = {".xls", ".xlsx", ".ods", ".csv", ".tsv"}
+LIBREOFFICE_SHEET_TARGETS = {".pdf", ".xlsx", ".ods", ".csv"}
+LIBREOFFICE_PRESENTATION_INPUTS = {".ppt", ".pptx", ".odp"}
+LIBREOFFICE_PRESENTATION_TARGETS = {".pdf", ".pptx", ".odp"}
 
 SOURCE_FORMATS = [
     "any", "pdf", "doc", "docx", "odt", "rtf", "html", "md", "txt", "epub",
@@ -37,8 +53,12 @@ ALL_TARGETS = [
 
 TABLE_TARGETS = ["xlsx", "ods", "csv", "tsv", "json"]
 IMAGE_TARGETS = ["png", "jpg", "jpeg", "bmp", "gif", "tiff", "webp", "pdf"]
-PANDOC_TARGETS = ["docx", "odt", "rtf", "html", "md", "txt", "epub"]
-OFFICE_TARGETS = ["pdf", "docx", "odt", "xlsx", "ods", "pptx", "odp", "html", "txt"]
+DOCUMENT_TARGETS = ["pdf", "docx", "odt", "rtf", "html", "md", "txt", "epub"]
+PRESENTATION_TARGETS = ["pdf", "pptx", "odp"]
+
+INTERNAL_DIR_NAMES = {
+    ".git", ".hg", ".svn", ".venv", "venv", "__pycache__", "node_modules",
+}
 
 
 @dataclass
@@ -98,20 +118,24 @@ def compatible_targets(fmt: str) -> list[str]:
     fmt = normalize_format(fmt)
     if fmt in {"any", ""}:
         return ALL_TARGETS[:]
+
     ext = f".{fmt}"
-    if ext in TABLE_EXTS or fmt == "xls":
+    if ext == ".json":
+        return ["auto", *TABLE_TARGETS]
+    if ext in TABLE_EXTS:
         return ["auto", *TABLE_TARGETS, "pdf"]
     if ext in IMAGE_EXTS:
         return ["auto", *IMAGE_TARGETS]
     if fmt == "pdf":
         return ["auto", "docx", "txt"]
-    if ext in PANDOC_EXTS:
-        values = ["auto", *PANDOC_TARGETS]
-        if ext in OFFICE_EXTS:
-            values.extend(x for x in OFFICE_TARGETS if x not in values)
-        return values
-    if ext in OFFICE_EXTS:
-        return ["auto", *OFFICE_TARGETS]
+    if ext in PRESENTATION_EXTS:
+        return ["auto", *PRESENTATION_TARGETS]
+    if ext in {".doc", ".rtf"}:
+        return ["auto", "pdf", "docx", "odt", "rtf", "html", "txt"]
+    if ext in {".docx", ".odt"}:
+        return ["auto", *DOCUMENT_TARGETS]
+    if ext in {".md", ".markdown", ".html", ".htm", ".txt", ".epub"}:
+        return ["auto", "docx", "odt", "rtf", "html", "md", "txt", "epub"]
     return ALL_TARGETS[:]
 
 
@@ -130,15 +154,50 @@ def resolve_output(source: Path, out_dir: Path, target: str, conflict: str) -> P
         n += 1
 
 
+def should_skip_intake_path(path: Path, root: Path, output_dir: Path | None = None) -> bool:
+    """Return True for hidden/internal paths and files inside the active output directory."""
+    try:
+        rel = path.resolve().relative_to(root.resolve())
+    except (ValueError, OSError):
+        return False
+
+    for part in rel.parts[:-1]:
+        if part.startswith(".") or part in INTERNAL_DIR_NAMES:
+            return True
+
+    if path.name.startswith("."):
+        return True
+
+    if output_dir is not None:
+        try:
+            path.resolve().relative_to(output_dir.resolve())
+            return True
+        except (ValueError, OSError):
+            pass
+    return False
+
+
+def discover_folder_files(
+    root: Path,
+    recursive: bool,
+    output_dir: Path | None = None,
+) -> list[Path]:
+    iterator = root.rglob("*") if recursive else root.iterdir()
+    files: list[Path] = []
+    for path in iterator:
+        if not path.is_file():
+            continue
+        if should_skip_intake_path(path, root, output_dir):
+            continue
+        files.append(path)
+    return files
+
+
 class Engine:
     def __init__(self):
         self.pandoc = which_any("pandoc")
         self.libreoffice = which_any("libreoffice", "soffice")
-
-    def capabilities(self) -> dict[str, bool]:
-        # Do not import optional libraries just to detect them. Some dependencies
-        # emit warnings at import time; find_spec keeps startup/doctor output clean.
-        return {
+        self._capabilities = {
             "pandoc": bool(self.pandoc),
             "libreoffice": bool(self.libreoffice),
             "pillow": importlib.util.find_spec("PIL") is not None,
@@ -147,34 +206,72 @@ class Engine:
             "pymupdf": importlib.util.find_spec("pymupdf") is not None,
         }
 
+    def capabilities(self) -> dict[str, bool]:
+        return dict(self._capabilities)
+
     def engine_for(self, source_fmt: str, target_fmt: str) -> str | None:
         src = f".{normalize_format(source_fmt)}"
         dst = f".{normalize_format(target_fmt)}"
-        caps = self.capabilities()
 
         if src == dst:
             return "copy"
+
         if src in IMAGE_EXTS and (dst in IMAGE_EXTS or dst == ".pdf"):
-            return "pillow" if caps["pillow"] else None
-        if (src in TABLE_EXTS or src == ".xls") and dst in TABLE_EXTS:
-            return "pandas" if caps["pandas"] else None
+            return "pillow" if self._capabilities["pillow"] else None
+
+        if src in TABLE_EXTS and dst in TABLE_EXTS:
+            return "pandas" if self._capabilities["pandas"] else None
+
         if src == ".pdf" and dst == ".docx":
-            return "pdf2docx" if caps["pdf2docx"] else None
+            return "pdf2docx" if self._capabilities["pdf2docx"] else None
+
         if src == ".pdf" and dst == ".txt":
-            return "pymupdf" if caps["pymupdf"] else None
-        if self.pandoc and src in PANDOC_EXTS and dst in {f".{x}" for x in PANDOC_TARGETS}:
+            return "pymupdf" if self._capabilities["pymupdf"] else None
+
+        if (
+            self.pandoc
+            and src in PANDOC_INPUT_EXTS
+            and dst in PANDOC_OUTPUT_EXTS
+        ):
             return "pandoc"
-        if self.libreoffice and (src in OFFICE_EXTS or src in TABLE_EXTS) and dst in {f".{x}" for x in OFFICE_TARGETS}:
-            return "libreoffice"
+
+        if self.libreoffice:
+            if src in LIBREOFFICE_DOCUMENT_INPUTS and dst in LIBREOFFICE_DOCUMENT_TARGETS:
+                return "libreoffice"
+            if src in LIBREOFFICE_SHEET_INPUTS and dst in LIBREOFFICE_SHEET_TARGETS:
+                return "libreoffice"
+            if src in LIBREOFFICE_PRESENTATION_INPUTS and dst in LIBREOFFICE_PRESENTATION_TARGETS:
+                return "libreoffice"
+
         return None
 
     def convert(self, source: Path, output: Path) -> str:
+        source = source.expanduser().resolve()
+        output = output.expanduser()
+        output.parent.mkdir(parents=True, exist_ok=True)
+
         src_fmt = source_format(source)
         dst_fmt = normalize_format(output.suffix)
         engine = self.engine_for(src_fmt, dst_fmt)
         if not engine:
             raise RuntimeError(f"No installed engine supports .{src_fmt} → .{dst_fmt}")
 
+        temp = output.parent / (
+            f".{output.stem}.fluxfile-{uuid.uuid4().hex[:10]}{output.suffix.lower()}"
+        )
+        try:
+            self._convert_direct(engine, source, temp)
+            if not temp.exists():
+                raise RuntimeError(f"{engine} completed without producing an output file")
+            os.replace(temp, output)
+        finally:
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return engine
+
+    def _convert_direct(self, engine: str, source: Path, output: Path) -> None:
         if engine == "copy":
             shutil.copy2(source, output)
         elif engine == "pillow":
@@ -191,17 +288,28 @@ class Engine:
             self._libreoffice(source, output)
         else:
             raise RuntimeError(f"Unknown conversion engine: {engine}")
-        return engine
 
     def _run(self, cmd: list[str]) -> None:
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            proc = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=SUBPROCESS_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"Conversion timed out after {SUBPROCESS_TIMEOUT_SECONDS} seconds"
+            ) from exc
         if proc.returncode != 0:
             raise RuntimeError((proc.stderr or proc.stdout or "conversion failed").strip())
 
     def _image(self, source: Path, output: Path) -> None:
-        from PIL import Image
+        from PIL import Image, ImageOps
 
-        with Image.open(source) as im:
+        with Image.open(source) as opened:
+            im = ImageOps.exif_transpose(opened)
             target = output.suffix.lower()
             if target in {".jpg", ".jpeg", ".pdf"} and im.mode not in {"RGB", "L"}:
                 rgba = im.convert("RGBA")
@@ -219,9 +327,13 @@ class Engine:
         elif src == ".tsv":
             df = pd.read_csv(source, sep="\t")
         elif src == ".json":
-            data = json.loads(source.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                data = data.get("rows", [data])
+            data = json.loads(source.read_text(encoding="utf-8-sig"))
+            if isinstance(data, dict) and "rows" in data:
+                data = data["rows"]
+            elif isinstance(data, dict):
+                data = [data]
+            if not isinstance(data, (list, dict)):
+                raise RuntimeError("JSON table source must contain an object, array, or {'rows': [...]} structure")
             df = pd.DataFrame(data)
         elif src in {".xlsx", ".xls"}:
             df = pd.read_excel(source)
@@ -263,21 +375,41 @@ class Engine:
             doc.close()
 
     def _libreoffice(self, source: Path, output: Path) -> None:
-        output.parent.mkdir(parents=True, exist_ok=True)
+        work_dir = output.parent / f".fluxfile-lo-{uuid.uuid4().hex[:8]}"
+        profile_dir = work_dir / "profile"
+        converted_dir = work_dir / "converted"
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        converted_dir.mkdir(parents=True, exist_ok=True)
+
         target = output.suffix.lower().lstrip(".")
-        temp_dir = output.parent / f".fluxfile-lo-{uuid.uuid4().hex[:8]}"
-        temp_dir.mkdir(parents=True, exist_ok=True)
+        profile_uri = profile_dir.resolve().as_uri()
         try:
-            self._run([self.libreoffice, "--headless", "--convert-to", target, "--outdir", str(temp_dir), str(source)])
-            produced = temp_dir / f"{source.stem}.{target}"
+            self._run([
+                self.libreoffice,
+                f"-env:UserInstallation={profile_uri}",
+                "--headless",
+                "--nologo",
+                "--nodefault",
+                "--nofirststartwizard",
+                "--norestore",
+                "--convert-to",
+                target,
+                "--outdir",
+                str(converted_dir),
+                str(source),
+            ])
+            produced = converted_dir / f"{source.stem}.{target}"
             if not produced.exists():
-                matches = list(temp_dir.glob(f"{source.stem}.*"))
+                matches = [
+                    p for p in converted_dir.iterdir()
+                    if p.is_file() and p.stem == source.stem
+                ]
                 if not matches:
                     raise RuntimeError("LibreOffice did not produce an output file")
                 produced = matches[0]
             shutil.move(str(produced), str(output))
         finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            shutil.rmtree(work_dir, ignore_errors=True)
 
 
 class FluxFileApp(tk.Tk):
@@ -295,10 +427,15 @@ class FluxFileApp(tk.Tk):
         self.conflict = tk.StringVar(value="suffix")
         self.recursive = tk.BooleanVar(value=False)
         self.plan_text = tk.StringVar(value="Choose a source and target format.")
+        self.status_text = tk.StringVar(value="Ready")
+        self._running = False
+        self._ui_queue: queue.Queue[tuple[str, object]] = queue.Queue()
 
         self._build()
         self._refresh_engines()
         self._update_target_choices()
+        self.after(75, self._drain_ui_queue)
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build(self):
         self.columnconfigure(0, weight=1)
@@ -323,29 +460,38 @@ class FluxFileApp(tk.Tk):
         self.target_box.grid(row=0, column=4, padx=(0, 12))
         self.target_box.bind("<<ComboboxSelected>>", lambda _e: self._update_plan_status())
 
-        ttk.Button(header, text="Apply plan to queue", command=self.apply_plan_to_queue).grid(row=0, column=5)
+        self.apply_btn = ttk.Button(header, text="Apply plan to queue", command=self.apply_plan_to_queue)
+        self.apply_btn.grid(row=0, column=5)
         ttk.Label(header, textvariable=self.plan_text).grid(row=0, column=6, sticky="e", padx=(12, 0))
 
         top = ttk.Frame(self, padding=(12, 6, 12, 6))
         top.grid(row=1, column=0, sticky="ew")
         top.columnconfigure(6, weight=1)
 
-        ttk.Button(top, text="Add files", command=self.add_files).grid(row=0, column=0, padx=(0, 8))
-        ttk.Button(top, text="Add folder", command=self.add_folder).grid(row=0, column=1, padx=(0, 12))
-        ttk.Checkbutton(top, text="Include subfolders", variable=self.recursive).grid(row=0, column=2, padx=(0, 18))
+        self.add_files_btn = ttk.Button(top, text="Add files", command=self.add_files)
+        self.add_files_btn.grid(row=0, column=0, padx=(0, 8))
+        self.add_folder_btn = ttk.Button(top, text="Add folder", command=self.add_folder)
+        self.add_folder_btn.grid(row=0, column=1, padx=(0, 12))
+        self.recursive_btn = ttk.Checkbutton(top, text="Include subfolders", variable=self.recursive)
+        self.recursive_btn.grid(row=0, column=2, padx=(0, 18))
         ttk.Label(top, text="If output exists").grid(row=0, column=3, padx=(0, 6))
-        ttk.Combobox(
+        self.conflict_box = ttk.Combobox(
             top, textvariable=self.conflict, values=["suffix", "skip", "overwrite"], state="readonly", width=12
-        ).grid(row=0, column=4)
-        ttk.Button(top, text="Remove selected", command=self.remove_selected).grid(row=0, column=5, padx=(12, 8))
-        ttk.Button(top, text="Clear queue", command=self.clear).grid(row=0, column=6, sticky="e")
+        )
+        self.conflict_box.grid(row=0, column=4)
+        self.remove_btn = ttk.Button(top, text="Remove selected", command=self.remove_selected)
+        self.remove_btn.grid(row=0, column=5, padx=(12, 8))
+        self.clear_btn = ttk.Button(top, text="Clear queue", command=self.clear)
+        self.clear_btn.grid(row=0, column=6, sticky="e")
 
         out = ttk.Frame(self, padding=(12, 6, 12, 8))
         out.grid(row=2, column=0, sticky="ew")
         out.columnconfigure(1, weight=1)
         ttk.Label(out, text="Output folder").grid(row=0, column=0, padx=(0, 8))
-        ttk.Entry(out, textvariable=self.output_dir).grid(row=0, column=1, sticky="ew")
-        ttk.Button(out, text="Browse", command=self.pick_output).grid(row=0, column=2, padx=(8, 0))
+        self.output_entry = ttk.Entry(out, textvariable=self.output_dir)
+        self.output_entry.grid(row=0, column=1, sticky="ew")
+        self.output_browse_btn = ttk.Button(out, text="Browse", command=self.pick_output)
+        self.output_browse_btn.grid(row=0, column=2, padx=(8, 0))
 
         frame = ttk.Frame(self, padding=(12, 0, 12, 8))
         frame.grid(row=3, column=0, sticky="nsew")
@@ -382,10 +528,38 @@ class FluxFileApp(tk.Tk):
         bottom.columnconfigure(1, weight=1)
         self.engine_label = ttk.Label(bottom, text="")
         self.engine_label.grid(row=0, column=0, sticky="w")
-        ttk.Button(bottom, text="Rescan engines", command=self._refresh_engines).grid(row=0, column=2, padx=8)
-        ttk.Button(bottom, text="Open output folder", command=self.open_output_folder).grid(row=0, column=3, padx=8)
+        ttk.Label(bottom, textvariable=self.status_text).grid(row=0, column=1, sticky="e", padx=12)
+        self.rescan_btn = ttk.Button(bottom, text="Rescan engines", command=self._refresh_engines)
+        self.rescan_btn.grid(row=0, column=2, padx=8)
+        self.open_btn = ttk.Button(bottom, text="Open output folder", command=self.open_output_folder)
+        self.open_btn.grid(row=0, column=3, padx=8)
         self.run_btn = ttk.Button(bottom, text="Convert queue", command=self.run_queue)
         self.run_btn.grid(row=0, column=4)
+
+        self._mutable_widgets = [
+            self.source_box, self.target_box, self.apply_btn,
+            self.add_files_btn, self.add_folder_btn, self.recursive_btn,
+            self.conflict_box, self.remove_btn, self.clear_btn,
+            self.output_entry, self.output_browse_btn, self.rescan_btn,
+        ]
+
+    def _set_running(self, running: bool):
+        self._running = running
+        for widget in self._mutable_widgets:
+            if isinstance(widget, ttk.Combobox):
+                widget.configure(state="disabled" if running else "readonly")
+            else:
+                widget.configure(state="disabled" if running else "normal")
+        self.run_btn.configure(state="disabled" if running else "normal")
+        self.status_text.set("Converting…" if running else self._queue_summary())
+
+    def _queue_summary(self) -> str:
+        total = len(self.jobs)
+        if not total:
+            return "Ready"
+        done = sum(j.status == "Done" for j in self.jobs)
+        failed = sum(j.status in {"Failed", "Unsupported"} for j in self.jobs)
+        return f"{total} queued · {done} done · {failed} failed/unsupported"
 
     def _update_target_choices(self):
         values = compatible_targets(self.source_choice.get())
@@ -430,8 +604,9 @@ class FluxFileApp(tk.Tk):
         if not folder:
             return
         root = Path(folder)
-        paths = root.rglob("*") if self.recursive.get() else root.iterdir()
-        self._add_paths([p for p in paths if p.is_file() and not p.name.startswith(".")])
+        output_dir = Path(self.output_dir.get()).expanduser()
+        paths = discover_folder_files(root, self.recursive.get(), output_dir)
+        self._add_paths(paths)
 
     def _add_paths(self, paths: list[Path]):
         existing = {j.source for j in self.jobs}
@@ -442,7 +617,6 @@ class FluxFileApp(tk.Tk):
         for p in paths:
             fmt = source_format(p)
             if selected_source != "any" and fmt != selected_source:
-                # jpg/jpeg and tif/tiff are treated as equivalent selection families.
                 equivalent = (
                     {selected_source, fmt} <= {"jpg", "jpeg"}
                     or {selected_source, fmt} <= {"tif", "tiff"}
@@ -516,6 +690,8 @@ class FluxFileApp(tk.Tk):
                 "", "end", iid=job.id,
                 values=(job.source, job.source_format, job.target_format, job.engine, job.status, tail),
             )
+        if not self._running:
+            self.status_text.set(self._queue_summary())
 
     def _refresh_engines(self):
         self.engine = Engine()
@@ -551,26 +727,45 @@ class FluxFileApp(tk.Tk):
             messagebox.showinfo(APP_NAME, "Add files to the queue first.")
             return
 
-        unavailable = [j for j in self.jobs if self.engine.engine_for(j.source_format, j.target_format) is None]
-        if unavailable:
+        supported = []
+        unsupported = []
+        for job in self.jobs:
+            engine = self.engine.engine_for(job.source_format, job.target_format)
+            job.engine = engine or "unavailable"
+            if engine:
+                supported.append(job)
+            else:
+                unsupported.append(job)
+
+        if not supported:
             preview = "\n".join(
                 f"{Path(j.source).name}: .{j.source_format} → .{j.target_format}"
-                for j in unavailable[:8]
+                for j in unsupported[:8]
             )
-            more = f"\n…and {len(unavailable)-8} more" if len(unavailable) > 8 else ""
             messagebox.showerror(
                 APP_NAME,
-                "Some queued conversions are unsupported with the installed engines:\n\n"
-                + preview + more
-                + "\n\nChange the From/To plan, install Pandoc/LibreOffice, or rescan engines."
+                "No queued conversion is currently supported by the installed engines.\n\n"
+                + preview
+                + "\n\nChange the plan, install Pandoc/LibreOffice, or rescan engines."
             )
+            self.render()
             return
+
+        if unsupported:
+            for job in unsupported:
+                job.status = "Unsupported"
+                job.error = f"No installed engine supports .{job.source_format} → .{job.target_format}"
+            messagebox.showinfo(
+                APP_NAME,
+                f"{len(unsupported)} unsupported job(s) will be recorded and skipped; "
+                f"{len(supported)} supported job(s) will continue."
+            )
 
         out_dir = Path(self.output_dir.get()).expanduser()
         out_dir.mkdir(parents=True, exist_ok=True)
         conflict = self.conflict.get()
         jobs_snapshot = list(self.jobs)
-        self.run_btn.configure(state="disabled")
+        self._set_running(True)
         threading.Thread(
             target=self._worker,
             args=(out_dir, conflict, jobs_snapshot),
@@ -579,65 +774,112 @@ class FluxFileApp(tk.Tk):
 
     def _worker(self, out_dir: Path, conflict: str, jobs: list[Job]):
         started = time.time()
-        report = []
+        report: list[dict] = []
 
-        for job in jobs:
-            source = Path(job.source)
-            target = normalize_format(job.target_format)
-            output = resolve_output(source, out_dir, target, conflict)
-            if output is None:
-                job.status = "Skipped"
-                job.error = "Output exists"
-                report.append(asdict(job))
-                self.after(0, self.render)
-                continue
+        try:
+            for job in jobs:
+                if self.engine.engine_for(job.source_format, job.target_format) is None:
+                    job.status = "Unsupported"
+                    if not job.error:
+                        job.error = f"No installed engine supports .{job.source_format} → .{job.target_format}"
+                    report.append(asdict(job))
+                    self._ui_queue.put(("render", None))
+                    continue
 
-            try:
-                job.status = "Converting"
-                job.error = ""
-                self.after(0, self.render)
-                engine = self.engine.convert(source, output)
-                job.status = "Done"
-                job.engine = engine
-                job.output = str(output)
-                item = asdict(job)
-                report.append(item)
-            except Exception as exc:
-                job.status = "Failed"
-                job.error = str(exc)
-                report.append(asdict(job))
-            self.after(0, self.render)
+                source = Path(job.source)
+                target = normalize_format(job.target_format)
+                output = resolve_output(source, out_dir, target, conflict)
+                if output is None:
+                    job.status = "Skipped"
+                    job.error = "Output exists"
+                    report.append(asdict(job))
+                    self._ui_queue.put(("render", None))
+                    continue
 
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        json_report = out_dir / f"fluxfile-report-{stamp}.json"
-        csv_report = out_dir / f"fluxfile-report-{stamp}.csv"
+                try:
+                    job.status = "Converting"
+                    job.error = ""
+                    self._ui_queue.put(("render", None))
+                    engine = self.engine.convert(source, output)
+                    job.status = "Done"
+                    job.engine = engine
+                    job.output = str(output)
+                    report.append(asdict(job))
+                except Exception as exc:
+                    job.status = "Failed"
+                    job.error = str(exc)
+                    report.append(asdict(job))
+                self._ui_queue.put(("render", None))
 
-        payload = {
-            "fluxfile_version": VERSION,
-            "started_unix": started,
-            "finished_unix": time.time(),
-            "platform": sys.platform,
-            "engines": self.engine.capabilities(),
-            "jobs": report,
-        }
-        json_report.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            json_report = out_dir / f"fluxfile-report-{stamp}.json"
+            csv_report = out_dir / f"fluxfile-report-{stamp}.csv"
 
-        import csv
-        with csv_report.open("w", newline="", encoding="utf-8") as fh:
-            fields = ["source", "source_format", "target_format", "engine", "status", "output", "error"]
-            writer = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
-            writer.writeheader()
-            writer.writerows(report)
+            payload = {
+                "fluxfile_version": VERSION,
+                "started_unix": started,
+                "finished_unix": time.time(),
+                "platform": sys.platform,
+                "engines": self.engine.capabilities(),
+                "jobs": report,
+            }
+            json_report.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-        self.after(0, lambda: self.run_btn.configure(state="normal"))
-        self.after(
-            0,
-            lambda: messagebox.showinfo(
+            with csv_report.open("w", newline="", encoding="utf-8") as fh:
+                fields = ["source", "source_format", "target_format", "engine", "status", "output", "error"]
+                writer = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
+                writer.writeheader()
+                writer.writerows(report)
+
+            summary = (
+                f"Conversion pass finished.\n\n"
+                f"Done: {sum(j['status'] == 'Done' for j in report)}\n"
+                f"Failed: {sum(j['status'] == 'Failed' for j in report)}\n"
+                f"Unsupported: {sum(j['status'] == 'Unsupported' for j in report)}\n"
+                f"Skipped: {sum(j['status'] == 'Skipped' for j in report)}\n\n"
+                f"JSON report: {json_report.name}\n"
+                f"CSV report: {csv_report.name}"
+            )
+            self._ui_queue.put(("complete", summary))
+        except Exception as exc:
+            self._ui_queue.put(("worker_error", str(exc)))
+        finally:
+            self._ui_queue.put(("running", False))
+
+    def _drain_ui_queue(self):
+        try:
+            while True:
+                action, payload = self._ui_queue.get_nowait()
+                if action == "render":
+                    self.render()
+                elif action == "running":
+                    self._set_running(bool(payload))
+                elif action == "complete":
+                    self.render()
+                    messagebox.showinfo(APP_NAME, str(payload))
+                elif action == "worker_error":
+                    self.render()
+                    messagebox.showerror(APP_NAME, f"Conversion pass stopped unexpectedly:\n{payload}")
+        except queue.Empty:
+            pass
+        if self.winfo_exists():
+            self.after(75, self._drain_ui_queue)
+
+    def _on_close(self):
+        if self._running:
+            close = messagebox.askyesno(
                 APP_NAME,
-                f"Conversion pass finished.\n\nJSON report: {json_report.name}\nCSV report: {csv_report.name}"
-            ),
-        )
+                "A conversion pass is still running. Closing FluxFile now will stop the background worker.\n\nClose anyway?"
+            )
+            if not close:
+                return
+        self.destroy()
 
 
 if __name__ == "__main__":
+    if sys.version_info < MIN_PYTHON:
+        raise SystemExit(
+            f"FluxFile requires Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+; "
+            f"found {sys.version.split()[0]}"
+        )
     FluxFileApp().mainloop()
