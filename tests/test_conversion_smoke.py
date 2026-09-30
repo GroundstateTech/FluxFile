@@ -37,6 +37,44 @@ class ConversionSmokeTests(unittest.TestCase):
             self.assertEqual(self.engine.convert(source, output), "pandas")
             self.assertIn("alpha,1", output.read_text(encoding="utf-8"))
 
+    def test_multisheet_xlsx_to_ods_preserves_all_sheets(self):
+        if not self.engine.capabilities()["pandas"]:
+            self.skipTest("pandas not installed")
+        import pandas as pd
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "book.xlsx"
+            output = root / "book.ods"
+
+            with pd.ExcelWriter(source, engine="openpyxl") as writer:
+                pd.DataFrame({"value": [1]}).to_excel(writer, index=False, sheet_name="Alpha")
+                pd.DataFrame({"value": [2]}).to_excel(writer, index=False, sheet_name="Beta")
+
+            self.assertEqual(self.engine.convert(source, output), "pandas")
+            sheets = pd.read_excel(output, sheet_name=None, engine="odf")
+            self.assertEqual(list(sheets), ["Alpha", "Beta"])
+            self.assertEqual(int(sheets["Alpha"].iloc[0]["value"]), 1)
+            self.assertEqual(int(sheets["Beta"].iloc[0]["value"]), 2)
+
+    def test_multisheet_workbook_refuses_flat_output(self):
+        if not self.engine.capabilities()["pandas"]:
+            self.skipTest("pandas not installed")
+        import pandas as pd
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "book.xlsx"
+            output = root / "book.csv"
+
+            with pd.ExcelWriter(source, engine="openpyxl") as writer:
+                pd.DataFrame({"value": [1]}).to_excel(writer, index=False, sheet_name="Alpha")
+                pd.DataFrame({"value": [2]}).to_excel(writer, index=False, sheet_name="Beta")
+
+            with self.assertRaisesRegex(RuntimeError, "would discard data"):
+                self.engine.convert(source, output)
+            self.assertFalse(output.exists())
+
     def test_png_to_jpg(self):
         if not self.engine.capabilities()["pillow"]:
             self.skipTest("Pillow not installed")
