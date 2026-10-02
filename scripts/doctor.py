@@ -37,7 +37,7 @@ def main() -> int:
         failures.append("Tkinter missing")
 
     print("\nOptional external engines:")
-    for binary in ("pandoc", "libreoffice", "soffice"):
+    for binary in ("pandoc", "libreoffice", "soffice", "ffmpeg"):
         print(f"  {binary}: {shutil.which(binary) or 'not found'}")
 
     print("\nPython conversion modules:")

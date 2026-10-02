@@ -18,8 +18,13 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from extended_formats import (
+    AUDIO, VIDEO, AUDIO_TARGETS, MEDIA_TARGETS, EXTRA_IMAGES, IMAGE_OUTPUTS,
+    ARCHIVES, media_command, convert_subtitles, repack_archive, render_svg,
+)
+
 APP_NAME = "FluxFile"
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 MIN_PYTHON = (3, 10)
 SUBPROCESS_TIMEOUT_SECONDS = 300
 
@@ -56,6 +61,14 @@ IMAGE_TARGETS = ["png", "jpg", "jpeg", "bmp", "gif", "tiff", "webp", "pdf"]
 DOCUMENT_TARGETS = ["pdf", "docx", "odt", "rtf", "html", "md", "txt", "epub"]
 PRESENTATION_TARGETS = ["pdf", "pptx", "odp"]
 
+IMAGE_EXTS |= {'.' + fmt for fmt in EXTRA_IMAGES}
+IMAGE_TARGETS += IMAGE_OUTPUTS
+TABLE_EXTS.add('.jsonl')
+TABLE_TARGETS.append('jsonl')
+SOURCE_FORMATS += sorted(AUDIO | VIDEO | EXTRA_IMAGES | {'svg', 'srt', 'vtt', 'jsonl'} | ARCHIVES)
+ALL_TARGETS += list(dict.fromkeys(AUDIO_TARGETS + MEDIA_TARGETS + IMAGE_OUTPUTS + ['srt', 'vtt', 'jsonl'] + sorted(ARCHIVES)))
+ALL_TARGETS = list(dict.fromkeys(ALL_TARGETS))
+
 INTERNAL_DIR_NAMES = {
     ".git", ".hg", ".svn", ".venv", "venv", "__pycache__", "node_modules",
 }
@@ -87,16 +100,27 @@ def normalize_format(value: str) -> str:
         "markdown": "md",
         "htm": "html",
         "tif": "tiff",
+        "tar.gz": "tgz",
+        "tar.bz2": "tbz2",
+        "tar.xz": "txz",
     }
     return aliases.get(value, value)
 
 
 def source_format(path: Path) -> str:
+    for suffix in (".tar.gz", ".tar.bz2", ".tar.xz"):
+        if path.name.lower().endswith(suffix): return normalize_format(suffix)
     return normalize_format(path.suffix)
 
 
 def choose_auto_target(source: Path) -> str:
     ext = source.suffix.lower()
+    if ext[1:] in AUDIO: return "wav" if ext != ".wav" else "flac"
+    if ext[1:] in VIDEO: return "mp4" if ext != ".mp4" else "mkv"
+    if ext in {".svg", ".ico", ".icns"}: return "png"
+    if ext in {".srt", ".vtt"}: return "vtt" if ext == ".srt" else "srt"
+    if ext == ".jsonl": return "xlsx"
+    if source_format(source) in ARCHIVES: return "zip" if ext != ".zip" else "tgz"
     if ext in {".md", ".markdown", ".txt", ".rtf", ".odt", ".html", ".htm", ".epub"}:
         return "docx"
     if ext in {".csv", ".tsv", ".json", ".ods"}:
@@ -119,6 +143,12 @@ def compatible_targets(fmt: str) -> list[str]:
     if fmt in {"any", ""}:
         return ALL_TARGETS[:]
 
+    if fmt in ARCHIVES: return ["auto", *sorted(ARCHIVES)]
+    if fmt == "jsonl": return ["auto", *TABLE_TARGETS]
+    if fmt in AUDIO: return ["auto", *AUDIO_TARGETS]
+    if fmt in VIDEO: return ["auto", *MEDIA_TARGETS, *AUDIO_TARGETS]
+    if fmt == "svg": return ["auto", "png", "pdf"]
+    if fmt in {"srt", "vtt"}: return ["auto", "srt", "vtt"]
     ext = f".{fmt}"
     if ext == ".json":
         return ["auto", *TABLE_TARGETS]
@@ -127,7 +157,7 @@ def compatible_targets(fmt: str) -> list[str]:
     if ext in IMAGE_EXTS:
         return ["auto", *IMAGE_TARGETS]
     if fmt == "pdf":
-        return ["auto", "docx", "txt"]
+        return ["auto", "docx", "txt", "html", "png", "jpg", "tiff"]
     if ext in PRESENTATION_EXTS:
         return ["auto", *PRESENTATION_TARGETS]
     if ext in {".doc", ".rtf"}:
@@ -195,9 +225,17 @@ def discover_folder_files(
 
 class Engine:
     def __init__(self):
+        self.ffmpeg = which_any("ffmpeg")
         self.pandoc = which_any("pandoc")
         self.libreoffice = which_any("libreoffice", "soffice")
+        try:
+            import cairosvg
+            svg_available = True
+        except (ImportError, OSError):
+            svg_available = False
         self._capabilities = {
+            "ffmpeg": bool(self.ffmpeg),
+            "cairosvg": svg_available,
             "pandoc": bool(self.pandoc),
             "libreoffice": bool(self.libreoffice),
             "pillow": importlib.util.find_spec("PIL") is not None,
@@ -216,10 +254,23 @@ class Engine:
         if src == dst:
             return "copy"
 
-        if src in IMAGE_EXTS and (dst in IMAGE_EXTS or dst == ".pdf"):
-            return "pillow" if self._capabilities["pillow"] else None
+        if src[1:] in ARCHIVES and dst[1:] in ARCHIVES: return "archive"
+        if src[1:] in AUDIO | VIDEO:
+            if dst[1:] in AUDIO_TARGETS or (src[1:] in VIDEO and dst[1:] in MEDIA_TARGETS):
+                return "ffmpeg" if self.ffmpeg else None
+        if src == ".svg" and dst in {".png", ".pdf"}:
+            return "cairosvg" if self._capabilities["cairosvg"] else None
+        if {src, dst} == {".srt", ".vtt"}: return "subtitles"
+        if src == ".pdf" and dst in {".html", ".png", ".jpg", ".tiff"}:
+            return "pdf-export" if self._capabilities["pymupdf"] else None
+        if src in IMAGE_EXTS and dst[1:] in IMAGE_TARGETS:
+            if not self._capabilities["pillow"]: return None
+            from PIL import Image
+            Image.init()
+            registered = Image.registered_extensions()
+            return "pillow" if registered.get(dst) in Image.SAVE else None
 
-        if src in TABLE_EXTS and dst in TABLE_EXTS:
+        if src in TABLE_EXTS and dst[1:] in TABLE_TARGETS:
             return "pandas" if self._capabilities["pandas"] else None
 
         if src == ".pdf" and dst == ".docx":
@@ -274,6 +325,16 @@ class Engine:
     def _convert_direct(self, engine: str, source: Path, output: Path) -> None:
         if engine == "copy":
             shutil.copy2(source, output)
+        elif engine == "ffmpeg":
+            self._run(media_command(self.ffmpeg, source, output))
+        elif engine == "archive":
+            repack_archive(source, output)
+        elif engine == "subtitles":
+            convert_subtitles(source, output)
+        elif engine == "cairosvg":
+            render_svg(source, output)
+        elif engine == "pdf-export":
+            self._pdf_export(source, output)
         elif engine == "pillow":
             self._image(source, output)
         elif engine == "pandas":
@@ -309,6 +370,17 @@ class Engine:
         from PIL import Image, ImageOps
 
         with Image.open(source) as opened:
+            if getattr(opened, "n_frames", 1) > 1:
+                if output.suffix.lower() not in {".gif", ".webp", ".png", ".tiff", ".tif", ".pdf"}:
+                    raise RuntimeError("Multi-frame image: choose GIF, WebP, PNG, TIFF or PDF to preserve frames")
+                from PIL import ImageSequence
+                frames = [ImageOps.exif_transpose(frame.copy()) for frame in ImageSequence.Iterator(opened)]
+                if output.suffix.lower() == ".pdf": frames = [frame.convert("RGB") for frame in frames]
+                options = {"save_all": True, "append_images": frames[1:]}
+                if output.suffix.lower() in {".gif", ".webp", ".png"}:
+                    options.update(duration=opened.info.get("duration", 100), loop=opened.info.get("loop", 0))
+                frames[0].save(output, **options)
+                return
             im = ImageOps.exif_transpose(opened)
             target = output.suffix.lower()
             if target in {".jpg", ".jpeg", ".pdf"} and im.mode not in {"RGB", "L"}:
@@ -324,7 +396,9 @@ class Engine:
         src, dst = source.suffix.lower(), output.suffix.lower()
         sheets: dict[str, object]
 
-        if src == ".csv":
+        if src == ".jsonl":
+            sheets = {"Sheet1": pd.read_json(source, lines=True)}
+        elif src == ".csv":
             sheets = {"Sheet1": pd.read_csv(source)}
         elif src == ".tsv":
             sheets = {"Sheet1": pd.read_csv(source, sep="\t")}
@@ -381,10 +455,31 @@ class Engine:
             df.to_csv(output, index=False)
         elif dst == ".tsv":
             df.to_csv(output, sep="\t", index=False)
+        elif dst == ".jsonl":
+            output.write_text(df.to_json(orient="records", lines=True), encoding="utf-8")
         elif dst == ".json":
             output.write_text(df.to_json(orient="records", indent=2), encoding="utf-8")
         else:
             raise RuntimeError(f"Unsupported table target: {dst}")
+
+    def _pdf_export(self, source: Path, output: Path) -> None:
+        import pymupdf
+        with pymupdf.open(source) as doc:
+            if output.suffix == ".html":
+                output.write_text("<!doctype html><html><head><meta charset='utf-8'></head><body>" +
+                                  "\n".join(page.get_text("html") for page in doc) + "</body></html>", encoding="utf-8")
+                return
+            if len(doc) != 1 and output.suffix != ".tiff":
+                raise RuntimeError("Multi-page PDF: choose TIFF to preserve every page")
+            from PIL import Image
+            frames = []
+            if sum(page.rect.width * page.rect.height * 12 for page in doc) > 512 * 1024 * 1024:
+                raise RuntimeError("PDF render exceeds 512 MiB; split it into smaller documents")
+            for page in doc:
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
+                frames.append(Image.frombytes("RGB", (pix.width, pix.height), pix.samples))
+            if not frames: raise RuntimeError("PDF has no pages")
+            frames[0].save(output, save_all=True, append_images=frames[1:]) if output.suffix == ".tiff" else frames[0].save(output)
 
     def _pdf_docx(self, source: Path, output: Path) -> None:
         from pdf2docx import Converter
@@ -562,6 +657,7 @@ class FluxFileApp(tk.Tk):
         ttk.Label(bottom, textvariable=self.status_text).grid(row=0, column=1, sticky="e", padx=12)
         self.rescan_btn = ttk.Button(bottom, text="Rescan engines", command=self._refresh_engines)
         self.rescan_btn.grid(row=0, column=2, padx=8)
+        ttk.Button(out, text="Format guide", command=self.show_format_guide).grid(row=1, column=2, pady=(8, 0))
         self.open_btn = ttk.Button(bottom, text="Open output folder", command=self.open_output_folder)
         self.open_btn.grid(row=0, column=3, padx=8)
         self.run_btn = ttk.Button(bottom, text="Convert queue", command=self.run_queue)
@@ -777,7 +873,7 @@ class FluxFileApp(tk.Tk):
                 APP_NAME,
                 "No queued conversion is currently supported by the installed engines.\n\n"
                 + preview
-                + "\n\nChange the plan, install Pandoc/LibreOffice, or rescan engines."
+                + "\n\nChange the plan, install the required engine (see Format guide), or rescan engines."
             )
             self.render()
             return
@@ -895,6 +991,17 @@ class FluxFileApp(tk.Tk):
             pass
         if self.winfo_exists():
             self.after(75, self._drain_ui_queue)
+
+    def show_format_guide(self):
+        messagebox.showinfo(APP_NAME, "Local conversion families\n\n"
+            "Documents / ebooks: Pandoc or LibreOffice\nTables / JSONL: pandas\n"
+            "Images / icons: Pillow (codec support varies)\nPDF text, HTML, page images: PyMuPDF\n"
+            "Audio / video / audio extraction: FFmpeg\nSVG to PNG / PDF: CairoSVG + Cairo\n"
+            "SRT / VTT subtitles and ZIP / TAR / TGZ / TBZ2 / TXZ archives: built in\n\n"
+            "Multi-page PDFs: TIFF preserves all pages. Animated images require a multi-frame target.\n"
+            "Media conversion uses the first video/audio stream; subtitles and other tracks are omitted.\n"
+            "Archive repacking refuses links, unsafe paths, duplicates, and archives above 512 MiB.\n\n"
+            "No tool can convert every file into every format. Unavailable routes remain visible in the queue.")
 
     def _on_close(self):
         if self._running:
