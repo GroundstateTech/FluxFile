@@ -2,23 +2,51 @@
 
 FluxFile is Groundstate Technology LLC's local-first bulk file conversion workstation.
 
-Version **0.7.0** is a reliability and bug-hunt release. It keeps the existing cross-platform conversion planner while hardening recursive intake, conversion routing, overwrite safety, LibreOffice isolation, launchers, worker/UI coordination, diagnostics, and CI.
+Version **0.8.0** expands FluxFile into a multi-family conversion workstation: documents, ebooks, spreadsheets, images, audio, video, subtitles, PDF exports, and archives. Conversion stays on your computer.
 
-## What changed in 0.7.0
+## New in 0.8.0
 
-- **Atomic output writes.** Conversions are written to a temporary sibling file and moved into place only after the engine succeeds. A failed conversion no longer destroys an existing destination file.
-- **Recursive folder safety.** Folder intake ignores hidden/internal trees such as `.git`, `.venv`, `__pycache__`, and `node_modules`, and it skips the active output directory.
-- **Truthful conversion matrix.** The planner no longer advertises spreadsheet/presentation targets for document types that the engine layer cannot reliably produce.
-- **Partial-batch execution.** Unsupported jobs are recorded and skipped while supported jobs continue instead of one bad route blocking the entire queue.
-- **LibreOffice isolation.** Headless conversions use a dedicated temporary user profile so an already-running desktop LibreOffice session is much less likely to lock or stall FluxFile.
-- **Conversion timeout.** External engine calls are capped at five minutes instead of hanging forever.
-- **Safer image conversion.** EXIF orientation is applied before image export.
-- **Thread-safe UI updates.** The worker reports through a queue polled by Tk's main thread rather than directly driving Tk from the worker thread.
-- **Run-state protection.** Queue-mutating controls are disabled while a conversion pass is active.
-- **Unique reports.** Report names now include microseconds to avoid same-second collisions.
-- **Faster launchers.** Python dependencies are only reinstalled when `requirements.txt` changes.
-- **Stricter diagnostics and CI.** The doctor can fail on a broken core environment, and CI tests Python 3.10–3.14 on Ubuntu and Windows plus real conversion smoke tests.
-- **Workbook integrity.** XLS/XLSX/ODS conversions preserve all sheets when targeting XLSX/ODS; FluxFile refuses multi-sheet → CSV/TSV/JSON conversions instead of silently discarding sheets.
+| Family | New routes | Engine |
+| --- | --- | --- |
+| Audio | MP3, WAV, FLAC, OGG, OPUS, M4A, AAC, AIFF output | FFmpeg |
+| Video | MP4, MKV, MOV, AVI, WebM, animated GIF; extract audio | FFmpeg |
+| Images | ICO, ICNS, PPM, TGA, AVIF output; additional image inputs | Pillow; codec availability varies |
+| Vector graphics | SVG → PNG / PDF | optional CairoSVG + Cairo |
+| PDF | HTML; single-page PNG/JPG; all pages as TIFF | PyMuPDF |
+| Data | JSONL ↔ existing table formats | pandas |
+| Subtitles | SRT ↔ VTT | built in |
+| Archives | ZIP / TAR / TGZ / TBZ2 / TXZ repacking | built in |
+
+Animated image export preserves frames in GIF, WebP, PNG, TIFF and PDF; targets that would silently discard frames are refused. Multi-page PDF → PNG/JPG is refused; choose TIFF to preserve pages. Failed conversions retain existing destination files.
+
+Use **Format guide** inside the app for engine requirements and conversion boundaries. A headless CLI uses the same engine:
+
+```bash
+python fluxfile_cli.py --engines
+python fluxfile_cli.py recording.mp4 --to mp3 --output-dir converted
+python fluxfile_cli.py bundle.zip --to tgz
+```
+
+### Install the additional engines
+
+Ubuntu:
+
+```bash
+sudo apt install ffmpeg libcairo2
+python -m pip install -r requirements-optional.txt
+```
+
+Windows: install FFmpeg and add its `bin` directory to PATH. SVG rendering additionally requires CairoSVG and a working Cairo runtime; it remains optional. Run `python -m pip install -r requirements-optional.txt` in FluxFile's virtual environment after installing Cairo. Use **Rescan engines** after installing an engine. Ordinary images, tables, archives and subtitles need no FFmpeg/Cairo setup.
+
+### Conversion boundaries
+
+FluxFile supports useful conversions within compatible families; no converter can turn every arbitrary file into every other format. Proprietary CAD, raw camera formats, encrypted files, DRM-protected ebooks and OCR are not included in this release.
+
+Media output uses the first video/audio stream. Audio extraction uses the first audio stream. Extra tracks and embedded subtitles are omitted; lossy targets re-encode. GIF video output is limited to 640 pixels wide at 12 fps. Installed FFmpeg encoders determine actual media availability, and missing codecs produce a visible error.
+
+Table conversion preserves cell values and sheet names, not workbook formulas, macros or formatting. Subtitle conversion preserves timing and cue text; WebVTT styling, regions, cue identifiers and positioning are omitted. PDF text/HTML export does not OCR scanned pages. PDF image rendering is capped at approximately 512 MiB of raster data.
+
+Archive repacking preserves regular-file contents, paths and empty directories, not original permissions or metadata. It refuses links, special files, duplicate/unsafe paths, more than 10,000 entries, and expanded contents over 512 MiB. It never extracts archive members onto the filesystem. SVG rendering rejects external resource references and stylesheet imports.
 
 ## Conversion planning
 

@@ -1,0 +1,2 @@
+# SVG rendering also requires the Cairo system library.
+CairoSVG>=2.7.1,<3

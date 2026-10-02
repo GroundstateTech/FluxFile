@@ -1,3 +1,12 @@
+## 0.8.0 — 2026-10-02
+
+- Added FFmpeg audio/video conversion, audio extraction and video GIF output.
+- Added local SVG rendering, image/icon formats, JSONL, subtitles and archive repacking.
+- Added PDF HTML/page-image export, with all-page TIFF output.
+- Preserve image frames or refuse destructive flattening; retain atomic output protection.
+- Added Format guide and headless CLI, optional-engine setup and explicit conversion boundaries.
+- Added real round-trip, media, SVG, PDF/frame integrity and archive safety tests.
+
 # Changelog
 
 ## 0.7.0 — 2026-09-30
