@@ -6,9 +6,11 @@ import importlib.util
 import platform
 import shutil
 import sys
+from pathlib import Path
 
 MIN_PYTHON = (3, 10)
 REQUIRED_MODULES = ("PIL", "pandas", "openpyxl", "odf", "xlrd", "pymupdf", "pdf2docx")
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def main() -> int:
@@ -16,16 +18,14 @@ def main() -> int:
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="exit non-zero when Python, Tkinter, or a requirements.txt module is unavailable",
+        help="exit non-zero when Python, Tkinter, internal modules, or a requirements.txt module is unavailable",
     )
     args = parser.parse_args()
 
     failures: list[str] = []
-
-    version = sys.version_info[:3]
     print("FluxFile doctor")
     print(f"Python: {sys.version.split()[0]} ({platform.platform()})")
-    if version < MIN_PYTHON:
+    if sys.version_info[:3] < MIN_PYTHON:
         failures.append(f"Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+ required")
 
     print("Tkinter: ", end="")
@@ -35,6 +35,17 @@ def main() -> int:
     except Exception as exc:
         print(f"MISSING ({exc})")
         failures.append("Tkinter missing")
+
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    print("FluxFile architecture: ", end="")
+    try:
+        from fluxfile_core import VERSION
+        from fluxfile_batch import recommended_workers
+        print(f"OK (v{VERSION}, default workers={recommended_workers()})")
+    except Exception as exc:
+        print(f"BROKEN ({exc})")
+        failures.append(f"FluxFile internal import failed: {exc}")
 
     print("\nOptional external engines:")
     for binary in ("pandoc", "libreoffice", "soffice", "ffmpeg"):
