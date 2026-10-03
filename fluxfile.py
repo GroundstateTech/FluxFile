@@ -214,6 +214,8 @@ class FluxFileApp(tk.Tk):
         return "break"
 
     def _show_context_menu(self, event):
+        if self._running:
+            return
         row = self.tree.identify_row(event.y)
         if row and row not in self.tree.selection():
             self.tree.selection_set(row)
@@ -262,6 +264,8 @@ class FluxFileApp(tk.Tk):
         self.plan_text.set(f".{src} → .{target} · {engine or 'engine unavailable'}")
 
     def add_files(self):
+        if self._running:
+            return
         fmt = normalize_format(self.source_choice.get())
         variants = {
             "jpg": "*.jpg *.jpeg", "jpeg": "*.jpg *.jpeg", "tiff": "*.tif *.tiff",
@@ -275,6 +279,8 @@ class FluxFileApp(tk.Tk):
         self._add_paths([Path(p) for p in paths])
 
     def add_folder(self):
+        if self._running:
+            return
         folder = filedialog.askdirectory(title="Choose a folder")
         if not folder:
             return
@@ -313,6 +319,8 @@ class FluxFileApp(tk.Tk):
         self.status_text.set(f"Added {added} item(s)" + (f" · skipped {skipped} wrong format" if skipped else ""))
 
     def apply_plan_to_queue(self):
+        if self._running:
+            return
         selected_source = normalize_format(self.source_choice.get())
         selected_target = normalize_format(self.target_choice.get())
         changed = 0
@@ -336,17 +344,23 @@ class FluxFileApp(tk.Tk):
         self._refresh_progress()
 
     def pick_output(self):
+        if self._running:
+            return
         folder = filedialog.askdirectory(title="Choose output folder")
         if folder:
             self.output_dir.set(folder)
 
     def clear(self):
+        if self._running:
+            return
         self.jobs.clear()
         self.tree.delete(*self.tree.get_children())
         self._refresh_progress()
         self.details_text.set("Select a queue item to see its full path and result.")
 
     def remove_selected(self):
+        if self._running:
+            return
         selected = set(self.tree.selection())
         if not selected:
             return
@@ -357,6 +371,8 @@ class FluxFileApp(tk.Tk):
         self._refresh_progress()
 
     def retry_selected(self):
+        if self._running:
+            return
         selected = set(self.tree.selection())
         for job in self.jobs:
             if job.id not in selected:
@@ -409,6 +425,8 @@ class FluxFileApp(tk.Tk):
         self.details_text.set(details)
 
     def _refresh_engines(self):
+        if self._running:
+            return
         self.engine = Engine()
         caps = self.engine.capabilities()
         active = [name for name, ok in caps.items() if ok]
