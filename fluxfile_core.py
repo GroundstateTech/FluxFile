@@ -272,17 +272,26 @@ def should_skip_intake_path(path: Path, root: Path, output_dir: Path | None = No
 
 
 def discover_folder_files(root: Path, recursive: bool, output_dir: Path | None = None) -> list[Path]:
-    """Discover files while pruning hidden/internal trees before traversal."""
-    root = root.expanduser().resolve()
+    """Discover files while pruning hidden/internal trees before traversal.
+
+    Returned paths retain the caller's lexical root. This matters on Windows,
+    where resolving an 8.3 temporary-directory alias can produce a different
+    long path string even though both names refer to the same directory.
+    """
+    root_input = root.expanduser().absolute()
+    root_resolved = root_input.resolve()
     output_resolved = output_dir.expanduser().resolve() if output_dir else None
     if not recursive:
         return sorted(
-            [p for p in root.iterdir() if p.is_file() and not should_skip_intake_path(p, root, output_resolved)],
+            [
+                p for p in root_input.iterdir()
+                if p.is_file() and not should_skip_intake_path(p, root_resolved, output_resolved)
+            ],
             key=lambda p: p.name.lower(),
         )
 
     found: list[Path] = []
-    for current, dirs, files in os.walk(root, topdown=True):
+    for current, dirs, files in os.walk(root_resolved, topdown=True):
         current_path = Path(current)
         kept_dirs: list[str] = []
         for name in dirs:
@@ -299,8 +308,13 @@ def discover_folder_files(root: Path, recursive: bool, output_dir: Path | None =
         dirs[:] = kept_dirs
         for name in files:
             path = current_path / name
-            if not should_skip_intake_path(path, root, output_resolved):
-                found.append(path)
+            if should_skip_intake_path(path, root_resolved, output_resolved):
+                continue
+            try:
+                relative = path.resolve().relative_to(root_resolved)
+            except (ValueError, OSError):
+                continue
+            found.append(root_input / relative)
     return sorted(found, key=lambda p: str(p).lower())
 
 
@@ -336,6 +350,7 @@ class Engine:
             "pymupdf": importlib.util.find_spec("pymupdf") is not None,
         }
         self._route_cache: dict[tuple[str, str], str | None] = {}
+        self._cancel_state = threading.local()
         self._image_save_exts: set[str] = set()
         if self._capabilities["pillow"]:
             from PIL import Image
@@ -406,21 +421,33 @@ class Engine:
             raise RuntimeError(f"No installed engine supports .{src_fmt} → .{dst_fmt}")
 
         temp = output.parent / f".{output.stem}.fluxfile-{uuid.uuid4().hex[:10]}{output.suffix.lower()}"
+        previous_cancel_event = getattr(self._cancel_state, "event", None)
+        self._cancel_state.event = cancel_event
         try:
-            self._convert_direct(engine, source, temp, cancel_event)
+            # Keep the historical three-argument hook so subclasses/tests that
+            # override _convert_direct remain compatible with the scheduler refactor.
+            self._convert_direct(engine, source, temp)
             if cancel_event and cancel_event.is_set():
                 raise ConversionCancelled("Conversion cancelled")
             if not temp.exists():
                 raise RuntimeError(f"{engine} completed without producing an output file")
             os.replace(temp, output)
         finally:
+            if previous_cancel_event is None:
+                try:
+                    del self._cancel_state.event
+                except AttributeError:
+                    pass
+            else:
+                self._cancel_state.event = previous_cancel_event
             try:
                 temp.unlink(missing_ok=True)
             except OSError:
                 pass
         return engine
 
-    def _convert_direct(self, engine: str, source: Path, output: Path, cancel_event: threading.Event | None) -> None:
+    def _convert_direct(self, engine: str, source: Path, output: Path) -> None:
+        cancel_event = getattr(self._cancel_state, "event", None)
         if cancel_event and cancel_event.is_set():
             raise ConversionCancelled("Conversion cancelled")
         if engine == "copy":
