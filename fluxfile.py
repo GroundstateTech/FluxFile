@@ -351,12 +351,20 @@ class FluxFileApp(tk.Tk):
             if not format_matches(selected_source, job.source_format):
                 continue
             source = Path(job.source)
+            if not source.is_file():
+                job.status = "Missing"
+                job.engine = "unavailable"
+                job.output = ""
+                job.error = "Source file is missing"
+                self._update_job_row(job)
+                continue
+            job.source_format = source_format(source)
             target = choose_auto_target(source) if selected_target == "auto" else selected_target
             job.target_format = target
             job.engine = self.engine.engine_for(job.source_format, target) or "unavailable"
-            job.status = "Queued"
+            job.status = "Queued" if job.engine != "unavailable" else "Unsupported"
             job.output = ""
-            job.error = ""
+            job.error = "" if job.status == "Queued" else f"No installed engine supports .{job.source_format} → .{target}"
             job.duration_seconds = 0.0
             job.output_bytes = 0
             self._update_job_row(job)
