@@ -63,7 +63,7 @@ def _portable_source_name(value: str | Path) -> str:
         return ""
     windows_name = PureWindowsPath(raw).name
     native_name = Path(raw).name
-    return windows_name if ("\" in raw or PureWindowsPath(raw).drive) else native_name
+    return windows_name if ("\\\\" in raw or PureWindowsPath(raw).drive) else native_name
 
 
 def _serialize_job(job: Job, base_dir: Path) -> dict[str, Any]:
