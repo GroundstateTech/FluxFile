@@ -24,6 +24,7 @@ from fluxfile_core import (
     format_matches,
     normalize_format,
     resolve_output,
+    safe_relative_dir,
     should_skip_intake_path,
     source_format,
     which_any,
