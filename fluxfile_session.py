@@ -205,7 +205,11 @@ def relink_missing_jobs(jobs: list[Job], source_root: Path, engine: Engine) -> t
     relinked = 0
     unresolved = 0
     for job in jobs:
-        if Path(job.source).is_file() and job.status != "Missing":
+        current_source = Path(job.source)
+        if current_source.is_file():
+            if job.status == "Missing":
+                relink_job(job, current_source, engine)
+                relinked += 1
             continue
         relative = safe_relative_dir(job.relative_dir)
         name = _portable_source_name(job.source)
