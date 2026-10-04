@@ -2,11 +2,22 @@
 
 FluxFile is Groundstate Technology LLC's local-first bulk file conversion workstation.
 
-Version **0.9.0** is the workstation hardening release: the 0.8 format expansion is retained, while the application is reorganized into a conversion core, a reusable batch scheduler, and a thinner desktop UI. Large queues now avoid full-table redraws, independent jobs can run in parallel, running external converters can be cancelled, and GUI/CLI batches use the same backend.
+Version **0.10.0** is the bulk-workflow release. It keeps the 0.9 architecture and conversion engines, then adds recursive folder-layout preservation, queue session save/load, safer resume behavior, CLI input deduplication, and richer reports for large conversion jobs.
 
-## New in 0.9.0
+## New in 0.10.0
 
-### Cleaner desktop workflow
+### Bulk workflow
+
+- **Folder layout** selector: `flat` preserves the established behavior; `preserve` recreates each queued folder-relative subdirectory under the output directory.
+- **Save queue / Load queue** stores conversion plans as `.fluxqueue.json` session files.
+- Completed session jobs stay completed only when their recorded output still exists.
+- Failed/cancelled/skipped session jobs resume as queued work.
+- Missing source files load as **Missing** instead of failing in the middle of a batch.
+- Recursive folder entries display their relative path in the queue so same-named files are easy to distinguish.
+- CLI directory collection now deduplicates a file even if it is supplied both directly and through a folder.
+- JSON/CSV reports include each job's `relative_dir` and the batch output layout.
+
+### Desktop workflow
 
 - Cleaner **Plan → Intake → Queue → Progress → Actions** layout.
 - Queue columns are reduced to Source, Route, Engine, Status, and Result.
@@ -19,6 +30,8 @@ Version **0.9.0** is the workstation hardening release: the 0.8 format expansion
   - **Ctrl+Enter** convert queued items
   - **Delete** remove selected
   - **Ctrl+A** select all
+  - **Ctrl+Shift+S** save queue session
+  - **Ctrl+Shift+L** load queue session
   - **F5** rescan engines
   - **Esc** cancel
 - Format guide is now a readable resizable window instead of a dense message box.
@@ -27,7 +40,8 @@ Version **0.9.0** is the workstation hardening release: the 0.8 format expansion
 
 ```text
 fluxfile_core.py     format registry, routing, conversion engines, intake/path safety
-fluxfile_batch.py    bounded concurrency, cancellation, output reservation, reports
+fluxfile_batch.py    bounded concurrency, cancellation, output reservation, folder layout, reports
+fluxfile_session.py  queue session serialization and safe resume rules
 extended_formats.py  FFmpeg/media, subtitle, archive and SVG helpers
 fluxfile.py          desktop UI only; re-exports legacy core imports for compatibility
 fluxfile_cli.py      headless batch client using the same scheduler/core
@@ -120,10 +134,11 @@ The CLI now accepts multiple files and folders and uses the same batch scheduler
 python fluxfile_cli.py --engines
 python fluxfile_cli.py recording.mp4 --to mp3 --output-dir converted
 python fluxfile_cli.py input-a input-b --recursive --to auto --workers 4
+python fluxfile_cli.py photos --recursive --layout preserve --to webp --output-dir converted
 python fluxfile_cli.py folder --recursive --to png --conflict suffix --json
 ```
 
-`--workers` accepts 1–8. The default is also available through `FLUXFILE_WORKERS`.
+`--workers` accepts 1–8. The default is also available through `FLUXFILE_WORKERS`. `--layout preserve` mirrors recursive source subdirectories; the default `flat` mode remains backward-compatible.
 
 ## Queue behavior
 
@@ -132,10 +147,12 @@ python fluxfile_cli.py folder --recursive --to png --conflict suffix --json
 3. Optionally enable **Include subfolders**.
 4. Review the detected route and engine.
 5. Use **Apply to queue** when changing an existing plan.
-6. Choose `suffix`, `skip`, or `overwrite` for existing outputs.
-7. Convert.
-8. Cancel if necessary; completed outputs remain valid and unfinished jobs are marked Cancelled.
-9. Select failed/cancelled rows and use **Retry** to explicitly requeue them.
+6. Choose `flat` or `preserve` folder layout.
+7. Choose `suffix`, `skip`, or `overwrite` for existing outputs.
+8. Optionally **Save queue** if you want to resume the plan later.
+9. Convert.
+10. Cancel if necessary; completed outputs remain valid and unfinished jobs are marked Cancelled.
+11. Select failed/cancelled rows and use **Retry** to explicitly requeue them.
 
 Completed jobs are not silently rerun on the next pass.
 
@@ -143,7 +160,7 @@ Completed jobs are not silently rerun on the next pass.
 
 ```bash
 python scripts/doctor.py --strict
-python -m compileall -q fluxfile_core.py fluxfile_batch.py fluxfile.py fluxfile_cli.py extended_formats.py
+python -m compileall -q fluxfile_core.py fluxfile_batch.py fluxfile_session.py fluxfile.py fluxfile_cli.py extended_formats.py
 python fluxfile_cli.py --engines
 python -m unittest discover -s tests -v
 ```
@@ -154,7 +171,8 @@ CI executes the core suite on **Windows and Ubuntu with Python 3.10–3.14**, pl
 
 ```text
 fluxfile_core.py            conversion core and routing
-fluxfile_batch.py           parallel scheduler, cancellation and reports
+fluxfile_batch.py           parallel scheduler, folder layout, cancellation and reports
+fluxfile_session.py         queue session persistence / resume validation
 extended_formats.py         media/archive/subtitle/SVG helpers
 fluxfile.py                 desktop application
 fluxfile_cli.py             headless batch client
