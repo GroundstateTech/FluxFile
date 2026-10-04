@@ -1,5 +1,7 @@
 # FluxFile
 
+**Admin / operator setup:** [ADMIN.md](ADMIN.md) — startup, frontend-to-backend paths, configuration, backups, checks, and remaining release work.
+
 FluxFile is Groundstate Technology LLC's local-first bulk file conversion workstation.
 
 Version **0.13.0** is the crash-recovery release. It keeps the portable v2 session and large-queue controls, then adds automatic local recovery snapshots so an unexpected close or machine restart no longer means rebuilding an unsaved queue from scratch.

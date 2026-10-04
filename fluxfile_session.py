@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -124,6 +125,14 @@ def _load_job(raw: dict[str, Any], base_dir: Path, version: int) -> Job | None:
         status = "Queued"
         output = ""
 
+    try:
+        duration = float(raw.get("duration_seconds", 0.0) or 0.0)
+        input_bytes = int(raw.get("input_bytes", 0) or 0)
+        output_bytes = int(raw.get("output_bytes", 0) or 0)
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise ValueError("Queue session contains invalid job metrics.") from exc
+    if not math.isfinite(duration) or min(duration, input_bytes, output_bytes) < 0:
+        raise ValueError("Queue session job metrics must be finite and nonnegative.")
     return Job(
         id=str(raw.get("id") or os.urandom(8).hex()),
         source=source,
@@ -133,9 +142,9 @@ def _load_job(raw: dict[str, Any], base_dir: Path, version: int) -> Job | None:
         engine=str(raw.get("engine", "")),
         output=output,
         error="" if status in {"Queued", "Done"} else str(raw.get("error", "")),
-        duration_seconds=float(raw.get("duration_seconds", 0.0) or 0.0),
-        input_bytes=int(raw.get("input_bytes", 0) or 0),
-        output_bytes=int(raw.get("output_bytes", 0) or 0),
+        duration_seconds=duration,
+        input_bytes=input_bytes,
+        output_bytes=output_bytes,
         relative_dir=safe_relative_dir(raw.get("relative_dir", "")),
     )
 
@@ -144,7 +153,7 @@ def load_session(path: Path) -> tuple[list[Job], dict[str, Any]]:
     path = path.expanduser().resolve(strict=False)
     base_dir = path.parent
     payload = json.loads(path.read_text(encoding="utf-8-sig"))
-    if payload.get("schema") != SESSION_SCHEMA:
+    if not isinstance(payload, dict) or payload.get("schema") != SESSION_SCHEMA:
         raise ValueError("This is not a FluxFile queue session.")
     version = int(payload.get("version", 0))
     if version not in SUPPORTED_SESSION_VERSIONS:
@@ -171,11 +180,15 @@ def load_session(path: Path) -> tuple[list[Job], dict[str, Any]]:
         raise ValueError("FluxFile session does not contain a valid jobs list.")
 
     jobs: list[Job] = []
+    identifiers = set()
     for raw in raw_jobs:
         if not isinstance(raw, dict):
             continue
         job = _load_job(raw, base_dir, version)
         if job is not None:
+            if job.id in identifiers:
+                raise ValueError("Queue session contains duplicate job IDs.")
+            identifiers.add(job.id)
             jobs.append(job)
     return jobs, settings
 
