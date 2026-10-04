@@ -30,6 +30,9 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(safe_relative_dir("."), "")
         self.assertEqual(safe_relative_dir("../escape"), "")
         self.assertEqual(safe_relative_dir("/absolute/path"), "")
+        self.assertEqual(safe_relative_dir(r"C:\\temp\\file"), "")
+        self.assertEqual(safe_relative_dir(r"\\\\server\\share"), "")
+        self.assertEqual(safe_relative_dir(r"nested\\deeper"), "nested/deeper")
 
     def test_auto_profiles(self):
         self.assertEqual(choose_auto_target(Path("notes.md")), "docx")
