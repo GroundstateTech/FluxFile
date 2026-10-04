@@ -83,7 +83,17 @@ Owns:
 
 This module does not know about Tkinter and does not run conversions. Filters affect presentation only; they never decide which queued jobs the batch scheduler receives.
 
-## 6. `fluxfile.py` — desktop shell
+## 6. `fluxfile_recovery.py` — local crash recovery
+
+Owns:
+
+- platform-specific recovery-file location
+- automatic recovery save/load/delete helpers
+- separation between machine-local recovery and user-managed portable sessions
+
+It delegates serialization to `fluxfile_session.py`, so recovery uses the same schema validation and atomic-write behavior as manual sessions.
+
+## 7. `fluxfile.py` — desktop shell
 
 Owns:
 
@@ -93,6 +103,7 @@ Owns:
 - incremental Treeview updates
 - keyboard/context-menu actions
 - queue search/filter presentation
+- debounced recovery scheduling / startup recovery prompt
 - progress presentation
 - sending batch events across the UI queue
 
@@ -100,7 +111,7 @@ It re-exports the established public core names so existing code/tests importing
 
 Do not add conversion implementations to this file.
 
-## 7. `fluxfile_cli.py` — headless client
+## 8. `fluxfile_cli.py` — headless client
 
 The CLI is a client of `fluxfile_core` and `fluxfile_batch`, just like the desktop UI.
 
@@ -148,5 +159,6 @@ A backend change should preserve:
 - CLI integration tests
 - portable session / legacy-session / relinking tests
 - queue search/filter/bulk-operation tests
+- cross-platform recovery-location and snapshot lifecycle tests
 
 CI compiles every top-level module before executing the tests on Windows and Ubuntu across Python 3.10–3.14.
