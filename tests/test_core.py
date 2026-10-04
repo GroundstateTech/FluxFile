@@ -11,6 +11,7 @@ from fluxfile import (
     resolve_output,
     should_skip_intake_path,
     source_format,
+    safe_relative_dir,
 )
 
 
@@ -23,6 +24,12 @@ class CoreTests(unittest.TestCase):
     def test_source_format(self):
         self.assertEqual(source_format(Path("report.CSV")), "csv")
         self.assertEqual(source_format(Path("photo.tif")), "tiff")
+
+    def test_safe_relative_dir_rejects_escape(self):
+        self.assertEqual(safe_relative_dir("nested/deeper"), "nested/deeper")
+        self.assertEqual(safe_relative_dir("."), "")
+        self.assertEqual(safe_relative_dir("../escape"), "")
+        self.assertEqual(safe_relative_dir("/absolute/path"), "")
 
     def test_auto_profiles(self):
         self.assertEqual(choose_auto_target(Path("notes.md")), "docx")
