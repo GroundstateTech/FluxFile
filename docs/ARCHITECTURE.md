@@ -64,11 +64,13 @@ Any future engine that is not safely parallel should receive its own gate here r
 Owns:
 
 - atomic `.fluxqueue.json` session serialization
-- session schema/version validation
+- session schema/version validation and v1 → v2 compatibility
+- safe relative path references anchored to the session directory
 - restoring saved UI/batch settings
 - resume rules for completed, failed, cancelled and missing jobs
+- deterministic missing-source relinking
 
-Session files contain paths and queue metadata, not copies of source files.
+Session files contain paths and queue metadata, not copies of source files. Relative references are used only when the referenced path is inside the session directory tree; external paths remain explicit absolute references.
 
 ## 5. `fluxfile.py` — desktop shell
 
@@ -76,7 +78,7 @@ Owns:
 
 - Tkinter layout and interaction
 - queue presentation
-- file/folder dialogs
+- file/folder and relinking dialogs
 - incremental Treeview updates
 - keyboard/context-menu actions
 - progress presentation
@@ -132,5 +134,6 @@ A backend change should preserve:
 - extended media/archive/SVG/PDF tests
 - batch concurrency/cancellation/reservation tests
 - CLI integration tests
+- portable session / legacy-session / relinking tests
 
 CI compiles every top-level module before executing the tests on Windows and Ubuntu across Python 3.10–3.14.
