@@ -184,7 +184,7 @@ class SessionTests(unittest.TestCase):
                 engine="unavailable",
                 relative_dir="",
             )
-            relinked, unresolved = relink_missing_jobs([job], root / "unused-root" if False else root, Engine())
+            relinked, unresolved = relink_missing_jobs([job], root, Engine())
 
             self.assertEqual((relinked, unresolved), (1, 0))
             self.assertEqual(job.status, "Queued")
