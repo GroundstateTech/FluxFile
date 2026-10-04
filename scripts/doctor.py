@@ -44,7 +44,8 @@ def main() -> int:
         from fluxfile_batch import recommended_workers
         from fluxfile_session import SESSION_VERSION
         from fluxfile_queue import PROBLEM_STATUSES
-        print(f"OK (v{VERSION}, queue schema={SESSION_VERSION}, problem states={len(PROBLEM_STATUSES)}, default workers={recommended_workers()})")
+        from fluxfile_recovery import recovery_path
+        print(f"OK (v{VERSION}, queue schema={SESSION_VERSION}, problem states={len(PROBLEM_STATUSES)}, recovery={recovery_path()}, default workers={recommended_workers()})")
     except Exception as exc:
         print(f"BROKEN ({exc})")
         failures.append(f"FluxFile internal import failed: {exc}")
