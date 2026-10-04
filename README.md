@@ -2,9 +2,22 @@
 
 FluxFile is Groundstate Technology LLC's local-first bulk file conversion workstation.
 
-Version **0.12.0** is the queue-operations release. It keeps the portable v2 session/relinking work from 0.11 and adds scalable search, status views, bulk problem recovery, and completed-row cleanup without changing conversion semantics or deleting output files.
+Version **0.13.0** is the crash-recovery release. It keeps the portable v2 session and large-queue controls, then adds automatic local recovery snapshots so an unexpected close or machine restart no longer means rebuilding an unsaved queue from scratch.
 
-## New in 0.12.0
+## New in 0.13.0
+
+### Automatic crash recovery
+
+- FluxFile keeps an automatic recovery snapshot of a non-empty queue in the operating system's user-state directory.
+- Recovery writes are **debounced** so large batches do not synchronously rewrite the queue file for every progress event.
+- Snapshot writes are atomic through the same session serializer used by manual queue files.
+- Queue mutations, relinking/retry actions, output-folder/layout/conflict changes, and batch progress schedule recovery updates.
+- Closing FluxFile writes one final recovery snapshot.
+- Starting FluxFile with a recovery snapshot offers **Restore** or **Discard** before normal work begins.
+- Clearing the queue removes the recovery file.
+- Corrupt/unreadable recovery snapshots are discarded rather than blocking startup.
+- Recovery files contain paths, settings, and queue metadata only — never copies of source files.
+- Manual `.fluxqueue.json` files remain the deliberate portable/shareable workflow.
 
 ### Large queue operations
 
@@ -68,6 +81,7 @@ fluxfile_core.py     format registry, routing, conversion engines, intake/path s
 fluxfile_batch.py    bounded concurrency, cancellation, output reservation, folder layout, reports
 fluxfile_session.py  portable queue serialization, safe resume rules, missing-source relinking
 fluxfile_queue.py    queue filtering, retry/recovery rules, completed-row cleanup
+fluxfile_recovery.py automatic OS-local crash recovery snapshots
 extended_formats.py  FFmpeg/media, subtitle, archive and SVG helpers
 fluxfile.py          desktop UI only; re-exports legacy core imports for compatibility
 fluxfile_cli.py      headless batch client using the same scheduler/core
@@ -187,7 +201,7 @@ Completed jobs are not silently rerun on the next pass.
 
 ```bash
 python scripts/doctor.py --strict
-python -m compileall -q fluxfile_core.py fluxfile_batch.py fluxfile_session.py fluxfile_queue.py fluxfile.py fluxfile_cli.py extended_formats.py
+python -m compileall -q fluxfile_core.py fluxfile_batch.py fluxfile_session.py fluxfile_queue.py fluxfile_recovery.py fluxfile.py fluxfile_cli.py extended_formats.py
 python fluxfile_cli.py --engines
 python -m unittest discover -s tests -v
 ```
@@ -201,6 +215,7 @@ fluxfile_core.py            conversion core and routing
 fluxfile_batch.py           parallel scheduler, folder layout, cancellation and reports
 fluxfile_session.py         queue session persistence / resume validation
 fluxfile_queue.py           search/filter and bulk queue operations
+fluxfile_recovery.py        automatic local recovery state
 extended_formats.py         media/archive/subtitle/SVG helpers
 fluxfile.py                 desktop application
 fluxfile_cli.py             headless batch client
