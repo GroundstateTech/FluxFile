@@ -32,6 +32,7 @@ from fluxfile_core import (
 from fluxfile_batch import BatchEvent, BatchRunner, BatchSummary, recommended_workers
 from fluxfile_session import load_session, relink_job, relink_missing_jobs, save_session
 from fluxfile_queue import filter_jobs, job_matches, requeue_job, requeue_problems, remove_completed
+from fluxfile_recovery import clear_recovery, load_recovery, recovery_exists, recovery_path, save_recovery
 
 
 class FluxFileApp(tk.Tk):
@@ -62,6 +63,7 @@ class FluxFileApp(tk.Tk):
         self._runner: BatchRunner | None = None
         self._ui_queue: queue.Queue[tuple[str, object]] = queue.Queue()
         self._batch_thread: threading.Thread | None = None
+        self._recovery_after_id: str | None = None
 
         self._configure_style()
         self._build()
@@ -69,6 +71,7 @@ class FluxFileApp(tk.Tk):
         self._refresh_engines()
         self._update_target_choices()
         self.after(75, self._drain_ui_queue)
+        self.after(250, self._offer_recovery_restore)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _configure_style(self):
@@ -376,6 +379,7 @@ class FluxFileApp(tk.Tk):
             self._insert_job_row(job)
             added += 1
         self._refresh_progress()
+        self._schedule_recovery()
         self.status_text.set(f"Added {added} item(s)" + (f" · skipped {skipped} wrong format" if skipped else ""))
 
     def apply_plan_to_queue(self):
@@ -410,6 +414,7 @@ class FluxFileApp(tk.Tk):
             unsupported += int(job.engine == "unavailable")
         self.plan_text.set(f"Applied to {changed} item(s) · {unsupported} unavailable")
         self._refresh_progress()
+        self._schedule_recovery()
 
     def _session_settings(self) -> dict[str, object]:
         return {
@@ -452,9 +457,12 @@ class FluxFileApp(tk.Tk):
             messagebox.showerror(APP_NAME, f"Could not load queue session:\n{exc}")
             return
 
+        self._apply_loaded_queue(jobs, settings, "Loaded queue")
+
+    def _apply_loaded_queue(self, jobs: list[Job], settings: dict[str, object], label: str):
         self.jobs = jobs
         self.tree.delete(*self.tree.get_children())
-        self.output_dir.set(settings.get("output_dir") or str(Path.cwd() / "converted"))
+        self.output_dir.set(str(settings.get("output_dir") or (Path.cwd() / "converted")))
         self.source_choice.set(settings.get("source_choice") if settings.get("source_choice") in SOURCE_FORMATS else "any")
         self.target_choice.set(settings.get("target_choice") if settings.get("target_choice") in ALL_TARGETS else "auto")
         self.conflict.set(settings.get("conflict") if settings.get("conflict") in {"suffix", "skip", "overwrite"} else "suffix")
@@ -481,9 +489,47 @@ class FluxFileApp(tk.Tk):
         self._refresh_progress()
         version = settings.get("session_version", 1)
         self.status_text.set(
-            f"Loaded queue v{version} · {len(self.jobs)} item(s)"
+            f"{label} v{version} · {len(self.jobs)} item(s)"
             + (f" · {missing} missing — use Relink missing" if missing else "")
         )
+        self._schedule_recovery()
+
+    def _schedule_recovery(self, delay_ms: int = 500):
+        if self._recovery_after_id is not None:
+            try:
+                self.after_cancel(self._recovery_after_id)
+            except Exception:
+                pass
+        self._recovery_after_id = self.after(delay_ms, self._write_recovery)
+
+    def _write_recovery(self):
+        self._recovery_after_id = None
+        try:
+            save_recovery(self.jobs, self._session_settings())
+        except Exception as exc:
+            self.status_text.set(f"Recovery snapshot failed · {exc}")
+
+    def _offer_recovery_restore(self):
+        if self.jobs or not recovery_exists():
+            return
+        try:
+            jobs, settings = load_recovery()
+        except Exception as exc:
+            clear_recovery()
+            self.status_text.set(f"Discarded unreadable recovery snapshot · {exc}")
+            return
+        if not jobs:
+            clear_recovery()
+            return
+        restore = messagebox.askyesno(
+            APP_NAME,
+            f"FluxFile found an automatic recovery snapshot with {len(jobs)} queued item(s). Restore it?",
+        )
+        if restore:
+            self._apply_loaded_queue(jobs, settings, "Recovered queue")
+        else:
+            clear_recovery()
+            self.status_text.set("Recovery snapshot discarded")
 
     def pick_output(self):
         if self._running:
@@ -491,6 +537,7 @@ class FluxFileApp(tk.Tk):
         folder = filedialog.askdirectory(title="Choose output folder")
         if folder:
             self.output_dir.set(folder)
+            self._schedule_recovery()
 
     def clear(self):
         if self._running:
@@ -499,6 +546,7 @@ class FluxFileApp(tk.Tk):
         self.tree.delete(*self.tree.get_children())
         self._refresh_queue_view()
         self._refresh_progress()
+        self._schedule_recovery()
         self.details_text.set("Select a queue item to see its full path and result.")
 
     def remove_selected(self):
@@ -513,6 +561,7 @@ class FluxFileApp(tk.Tk):
                 self.tree.delete(item)
         self._refresh_queue_view()
         self._refresh_progress()
+        self._schedule_recovery()
 
     def retry_selected(self):
         if self._running:
@@ -524,6 +573,7 @@ class FluxFileApp(tk.Tk):
             requeue_job(job, self.engine)
             self._update_job_row(job)
         self._refresh_progress()
+        self._schedule_recovery()
 
     def retry_problem_jobs(self):
         if self._running:
@@ -532,6 +582,7 @@ class FluxFileApp(tk.Tk):
         self._refresh_queue_view()
         self._refresh_progress()
         self.status_text.set(f"Requeued {queued} problem job(s) · {unresolved} unresolved")
+        self._schedule_recovery()
 
     def clear_completed_jobs(self):
         if self._running:
@@ -540,6 +591,7 @@ class FluxFileApp(tk.Tk):
         self._refresh_queue_view()
         self._refresh_progress()
         self.status_text.set(f"Cleared {removed} completed job(s)" if removed else "No completed jobs to clear")
+        self._schedule_recovery()
 
     def relink_selected_source(self):
         if self._running:
@@ -563,6 +615,7 @@ class FluxFileApp(tk.Tk):
         self._update_job_row(job)
         self._refresh_progress()
         self.status_text.set(f"Relinked {Path(job.source).name}")
+        self._schedule_recovery()
 
     def relink_missing_folder(self):
         if self._running:
@@ -585,6 +638,7 @@ class FluxFileApp(tk.Tk):
         self._refresh_queue_view()
         self._refresh_progress()
         self.status_text.set(f"Relinked {relinked} source(s) · {unresolved} still missing")
+        self._schedule_recovery()
 
     def _job_is_visible(self, job: Job) -> bool:
         return job_matches(job, self.queue_search.get(), self.queue_filter.get())
@@ -774,8 +828,10 @@ class FluxFileApp(tk.Tk):
             self.status_text.set(f"Converting {Path(event.job.source).name}")
         elif event.kind == "progress":
             self._refresh_progress(event.completed, event.total)
+            self._schedule_recovery(750)
         elif event.kind == "complete":
             self._refresh_progress(event.completed, event.total)
+            self._schedule_recovery(100)
 
     def _show_summary(self, summary: BatchSummary):
         counts = summary.counts
@@ -839,6 +895,8 @@ class FluxFileApp(tk.Tk):
             "• Existing output files are published atomically after a successful conversion.\n"
             "• Folder layout can stay flat or preserve recursive source subfolders.\n"
             "• Queue search/status filters change only the view; hidden jobs remain in the conversion queue.\n"
+            "• Automatic recovery snapshots are debounced and stored in the OS user-state directory; they never embed source-file contents.\n"
+            "• On startup FluxFile offers to restore or discard a previous recovery snapshot. Manual .fluxqueue.json files remain the portable/shareable format.\n"
             "• Retry problems re-evaluates Failed/Unsupported/Skipped/Cancelled/Missing jobs against the current filesystem and engines.\n"
             "• Clear done removes completed rows without touching their output files.\n"
             "• Queue session v2 stores safe relative path references when files live beside/below the session file.\n"
@@ -856,6 +914,16 @@ class FluxFileApp(tk.Tk):
                 return
             if self._runner:
                 self._runner.cancel()
+        if self._recovery_after_id is not None:
+            try:
+                self.after_cancel(self._recovery_after_id)
+            except Exception:
+                pass
+            self._recovery_after_id = None
+        try:
+            save_recovery(self.jobs, self._session_settings())
+        except Exception:
+            pass
         self.destroy()
 
 
