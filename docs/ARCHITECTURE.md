@@ -72,7 +72,18 @@ Owns:
 
 Session files contain paths and queue metadata, not copies of source files. Relative references are used only when the referenced path is inside the session directory tree; external paths remain explicit absolute references.
 
-## 5. `fluxfile.py` — desktop shell
+## 5. `fluxfile_queue.py` — queue operations
+
+Owns:
+
+- queue search and status-filter predicates
+- problem-state classification
+- safe requeue/revalidation behavior
+- completed-row cleanup policy
+
+This module does not know about Tkinter and does not run conversions. Filters affect presentation only; they never decide which queued jobs the batch scheduler receives.
+
+## 6. `fluxfile.py` — desktop shell
 
 Owns:
 
@@ -81,6 +92,7 @@ Owns:
 - file/folder and relinking dialogs
 - incremental Treeview updates
 - keyboard/context-menu actions
+- queue search/filter presentation
 - progress presentation
 - sending batch events across the UI queue
 
@@ -88,7 +100,7 @@ It re-exports the established public core names so existing code/tests importing
 
 Do not add conversion implementations to this file.
 
-## 6. `fluxfile_cli.py` — headless client
+## 7. `fluxfile_cli.py` — headless client
 
 The CLI is a client of `fluxfile_core` and `fluxfile_batch`, just like the desktop UI.
 
@@ -135,5 +147,6 @@ A backend change should preserve:
 - batch concurrency/cancellation/reservation tests
 - CLI integration tests
 - portable session / legacy-session / relinking tests
+- queue search/filter/bulk-operation tests
 
 CI compiles every top-level module before executing the tests on Windows and Ubuntu across Python 3.10–3.14.

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.12.0 — 2026-10-04
+
+Large-queue operations release.
+
+### Added
+
+- Live queue search across source, route, engine, status, output, and error fields.
+- Status filters for queued/done/problem/missing/unsupported views.
+- Visible/total queue counts.
+- One-click **Retry problems** with filesystem and engine revalidation.
+- One-click **Clear done** that removes queue records without touching output files.
+- `Ctrl+F` queue-search shortcut.
+- New `fluxfile_queue.py` backend module with UI-independent queue behavior.
+- Regression tests for search/filter semantics, problem requeueing, missing-file handling, and completed-row cleanup.
+
+### Reliability
+
+- Queue filters never mutate the underlying job list.
+- Bulk retry cannot turn an actually missing file into runnable work.
+- Unsupported jobs remain explicit when the required engine is still unavailable.
+- Existing session, conversion, cancellation, portability, and output-integrity behavior is unchanged.
+
+
 ## 0.11.0 — 2026-10-03
 
 Portable session and missing-source recovery release.
