@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.13.0 — 2026-10-04
+
+Automatic crash-recovery release.
+
+### Added
+
+- Cross-platform automatic recovery location:
+  - Windows: `%LOCALAPPDATA%/FluxFile/recovery.fluxqueue.json`
+  - Linux: `$XDG_STATE_HOME/fluxfile/recovery.fluxqueue.json` or `~/.local/state/fluxfile/...`
+- Debounced automatic snapshots for queue/settings mutations and conversion progress.
+- Final atomic recovery write during normal application shutdown.
+- Startup Restore / Discard flow for previous recovery state.
+- Automatic cleanup when the queue becomes empty.
+- Corrupt recovery snapshots are discarded safely instead of blocking startup.
+- Regression tests for Windows/Linux recovery locations, save/load round trips, and empty-queue cleanup.
+
+### Boundaries
+
+- Automatic recovery is machine-local and is not intended as a sharing format.
+- Manual `.fluxqueue.json` sessions remain the portable format.
+- Recovery stores file paths and job metadata, never source-file contents.
+
+
 ## 0.12.0 — 2026-10-04
 
 Large-queue operations release.
