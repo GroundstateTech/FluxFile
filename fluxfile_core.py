@@ -11,7 +11,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from extended_formats import (
     ARCHIVES,
@@ -107,17 +107,22 @@ class Job:
 
 
 def safe_relative_dir(value: str | Path) -> str:
-    """Normalize a queue-relative directory without allowing path escape."""
+    """Normalize a queue-relative directory without allowing path escape.
+
+    Validate both POSIX and Windows path syntax regardless of the current host,
+    because queue sessions may move between operating systems.
+    """
     raw = str(value or "").strip()
     if not raw:
         return ""
-    candidate = Path(raw)
-    if candidate.is_absolute() or candidate.drive:
+    normalized = raw.replace("\\", "/")
+    windows = PureWindowsPath(raw)
+    if PurePosixPath(normalized).is_absolute() or windows.is_absolute() or windows.drive or raw.startswith("\\\\"):
         return ""
-    parts = [part for part in candidate.parts if part not in {"", "."}]
+    parts = [part for part in normalized.split("/") if part not in {"", "."}]
     if not parts or any(part == ".." for part in parts):
         return ""
-    return Path(*parts).as_posix()
+    return "/".join(parts)
 
 
 def which_any(*names: str) -> str | None:
