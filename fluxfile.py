@@ -256,6 +256,8 @@ class FluxFileApp(tk.Tk):
         self.bind("<Control-f>", lambda _e: self._focus_queue_search())
         self.queue_search.trace_add("write", lambda *_: self._refresh_queue_view())
         self.queue_filter.trace_add("write", lambda *_: self._refresh_queue_view())
+        for variable in (self.output_dir, self.conflict, self.recursive, self.layout):
+            variable.trace_add("write", lambda *_: self._schedule_recovery())
 
     def _focus_queue_search(self):
         self.queue_search_entry.focus_set()
