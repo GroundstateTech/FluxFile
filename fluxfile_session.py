@@ -155,7 +155,13 @@ def load_session(path: Path) -> tuple[list[Job], dict[str, Any]]:
     payload = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(payload, dict) or payload.get("schema") != SESSION_SCHEMA:
         raise ValueError("This is not a FluxFile queue session.")
-    version = int(payload.get("version", 0))
+    raw_version = payload.get("version", 0)
+    if isinstance(raw_version, bool) or not isinstance(raw_version, (int, str)):
+        raise ValueError("Queue session version must be an integer.")
+    try:
+        version = int(raw_version)
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise ValueError("Queue session version must be an integer.") from exc
     if version not in SUPPORTED_SESSION_VERSIONS:
         raise ValueError(f"Unsupported FluxFile queue session version: {payload.get('version')}")
 
@@ -171,7 +177,7 @@ def load_session(path: Path) -> tuple[list[Job], dict[str, Any]]:
         "target_choice": str(settings_raw.get("target_choice", "auto")),
         "conflict": str(settings_raw.get("conflict", "suffix")),
         "recursive": bool(settings_raw.get("recursive", False)),
-        "layout": str(settings_raw.get("layout", "flat")) if settings_raw.get("layout") in {"flat", "preserve"} else "flat",
+        "layout": str(settings_raw.get("layout", "flat")) if settings_raw.get("layout") in ("flat", "preserve") else "flat",
         "session_version": version,
     }
 
