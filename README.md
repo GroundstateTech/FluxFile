@@ -2,9 +2,20 @@
 
 FluxFile is Groundstate Technology LLC's local-first bulk file conversion workstation.
 
-Version **0.11.0** is the portable-session recovery release. It keeps the 0.10 bulk workflow, upgrades queue sessions to a move-aware v2 schema, preserves v1 compatibility, and adds explicit recovery tools for sources that were moved or mounted somewhere else.
+Version **0.12.0** is the queue-operations release. It keeps the portable v2 session/relinking work from 0.11 and adds scalable search, status views, bulk problem recovery, and completed-row cleanup without changing conversion semantics or deleting output files.
 
-## New in 0.11.0
+## New in 0.12.0
+
+### Large queue operations
+
+- Live queue search across source paths, relative folders, routes, engines, statuses, outputs, and error text.
+- Status views for **all**, **queued**, **done**, **problems**, **missing**, and **unsupported** jobs.
+- Filters are presentation-only: hidden jobs remain in the underlying queue and still convert when queued.
+- **Retry problems** re-checks current file availability and current engine support for Failed, Unsupported, Skipped, Cancelled, and Missing jobs.
+- **Clear done** removes completed queue records but never deletes converted outputs.
+- Queue view shows **visible / total** counts so filtered large batches remain understandable.
+- **Ctrl+F** jumps directly to queue search.
+- Queue operations live in `fluxfile_queue.py` so the behavior is testable without Tkinter.
 
 ### Portable sessions and recovery
 
@@ -45,6 +56,7 @@ Version **0.11.0** is the portable-session recovery release. It keeps the 0.10 b
   - **Ctrl+Shift+S** save queue session
   - **Ctrl+Shift+L** load queue session
   - **Ctrl+Shift+R** relink missing sources
+  - **Ctrl+F** focus queue search
   - **F5** rescan engines
   - **Esc** cancel
 - Format guide is now a readable resizable window instead of a dense message box.
@@ -55,6 +67,7 @@ Version **0.11.0** is the portable-session recovery release. It keeps the 0.10 b
 fluxfile_core.py     format registry, routing, conversion engines, intake/path safety
 fluxfile_batch.py    bounded concurrency, cancellation, output reservation, folder layout, reports
 fluxfile_session.py  portable queue serialization, safe resume rules, missing-source relinking
+fluxfile_queue.py    queue filtering, retry/recovery rules, completed-row cleanup
 extended_formats.py  FFmpeg/media, subtitle, archive and SVG helpers
 fluxfile.py          desktop UI only; re-exports legacy core imports for compatibility
 fluxfile_cli.py      headless batch client using the same scheduler/core
@@ -174,7 +187,7 @@ Completed jobs are not silently rerun on the next pass.
 
 ```bash
 python scripts/doctor.py --strict
-python -m compileall -q fluxfile_core.py fluxfile_batch.py fluxfile_session.py fluxfile.py fluxfile_cli.py extended_formats.py
+python -m compileall -q fluxfile_core.py fluxfile_batch.py fluxfile_session.py fluxfile_queue.py fluxfile.py fluxfile_cli.py extended_formats.py
 python fluxfile_cli.py --engines
 python -m unittest discover -s tests -v
 ```
@@ -187,6 +200,7 @@ CI executes the core suite on **Windows and Ubuntu with Python 3.10–3.14**, pl
 fluxfile_core.py            conversion core and routing
 fluxfile_batch.py           parallel scheduler, folder layout, cancellation and reports
 fluxfile_session.py         queue session persistence / resume validation
+fluxfile_queue.py           search/filter and bulk queue operations
 extended_formats.py         media/archive/subtitle/SVG helpers
 fluxfile.py                 desktop application
 fluxfile_cli.py             headless batch client
