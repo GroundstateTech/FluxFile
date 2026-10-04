@@ -42,7 +42,8 @@ def main() -> int:
     try:
         from fluxfile_core import VERSION
         from fluxfile_batch import recommended_workers
-        print(f"OK (v{VERSION}, default workers={recommended_workers()})")
+        from fluxfile_session import SESSION_VERSION
+        print(f"OK (v{VERSION}, queue schema={SESSION_VERSION}, default workers={recommended_workers()})")
     except Exception as exc:
         print(f"BROKEN ({exc})")
         failures.append(f"FluxFile internal import failed: {exc}")

@@ -59,7 +59,18 @@ The default pool is 1–4 workers based on the host CPU. `FLUXFILE_WORKERS` and 
 
 Any future engine that is not safely parallel should receive its own gate here rather than embedding scheduler logic inside the conversion implementation.
 
-## 4. `fluxfile.py` — desktop shell
+## 4. `fluxfile_session.py` — queue persistence
+
+Owns:
+
+- atomic `.fluxqueue.json` session serialization
+- session schema/version validation
+- restoring saved UI/batch settings
+- resume rules for completed, failed, cancelled and missing jobs
+
+Session files contain paths and queue metadata, not copies of source files.
+
+## 5. `fluxfile.py` — desktop shell
 
 Owns:
 
@@ -75,7 +86,7 @@ It re-exports the established public core names so existing code/tests importing
 
 Do not add conversion implementations to this file.
 
-## 5. `fluxfile_cli.py` — headless client
+## 6. `fluxfile_cli.py` — headless client
 
 The CLI is a client of `fluxfile_core` and `fluxfile_batch`, just like the desktop UI.
 
@@ -90,7 +101,7 @@ files/folders
 fluxfile_core: detect + create Job
     │
     ▼
-fluxfile_batch: reserve outputs + schedule
+fluxfile_batch: reserve outputs + apply flat/preserve layout + schedule
     │
     ├──> Engine.convert(...)
     │       └──> extended_formats helpers where needed

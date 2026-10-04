@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from fluxfile_core import ConversionCancelled, Engine, Job, VERSION, normalize_format, resolve_output
+from fluxfile_core import ConversionCancelled, Engine, Job, VERSION, normalize_format, resolve_output, safe_relative_dir
 
 
 @dataclass
@@ -119,7 +119,10 @@ class BatchRunner:
         out_dir: Path,
         conflict: str = "suffix",
         callback: Callable[[BatchEvent], None] | None = None,
+        layout: str = "flat",
     ) -> BatchSummary:
+        if layout not in {"flat", "preserve"}:
+            raise ValueError("layout must be 'flat' or 'preserve'")
         self.cancel_event.clear()
         started_unix = time.time()
         out_dir = out_dir.expanduser().resolve()
@@ -145,7 +148,11 @@ class BatchRunner:
                 self._emit(callback, BatchEvent("job", job=job, completed=completed, total=total))
                 continue
 
-            output = resolve_output(Path(job.source), out_dir, normalize_format(job.target_format), conflict, reserved)
+            job_out_dir = out_dir
+            relative_dir = safe_relative_dir(job.relative_dir)
+            if layout == "preserve" and relative_dir:
+                job_out_dir = out_dir / Path(relative_dir)
+            output = resolve_output(Path(job.source), job_out_dir, normalize_format(job.target_format), conflict, reserved)
             if output is None:
                 job.status = "Skipped"
                 job.output = ""
@@ -205,6 +212,7 @@ class BatchRunner:
             started_unix=started_unix,
             finished_unix=finished_unix,
             counts=counts,
+            layout=layout,
         )
         summary = BatchSummary(
             started_unix=started_unix,
@@ -224,6 +232,7 @@ class BatchRunner:
         started_unix: float,
         finished_unix: float,
         counts: dict[str, int],
+        layout: str,
     ) -> tuple[Path, Path]:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         json_report = out_dir / f"fluxfile-report-{stamp}.json"
@@ -234,6 +243,7 @@ class BatchRunner:
             "finished_unix": finished_unix,
             "duration_seconds": round(max(0.0, finished_unix - started_unix), 4),
             "workers": self.workers,
+            "layout": layout,
             "platform": os.sys.platform,
             "engines": self.engine.capabilities(),
             "counts": counts,
@@ -247,7 +257,7 @@ class BatchRunner:
         with csv_tmp.open("w", newline="", encoding="utf-8") as fh:
             fields = [
                 "source", "source_format", "target_format", "engine", "status", "output", "error",
-                "duration_seconds", "input_bytes", "output_bytes",
+                "duration_seconds", "input_bytes", "output_bytes", "relative_dir",
             ]
             writer = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
             writer.writeheader()

@@ -11,7 +11,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from extended_formats import (
     ARCHIVES,
@@ -28,7 +28,7 @@ from extended_formats import (
 )
 
 APP_NAME = "FluxFile"
-VERSION = "0.9.0"
+VERSION = "0.10.0"
 MIN_PYTHON = (3, 10)
 SUBPROCESS_TIMEOUT_SECONDS = 300
 
@@ -103,6 +103,26 @@ class Job:
     duration_seconds: float = 0.0
     input_bytes: int = 0
     output_bytes: int = 0
+    relative_dir: str = ""
+
+
+def safe_relative_dir(value: str | Path) -> str:
+    """Normalize a queue-relative directory without allowing path escape.
+
+    Validate both POSIX and Windows path syntax regardless of the current host,
+    because queue sessions may move between operating systems.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    normalized = raw.replace("\\", "/")
+    windows = PureWindowsPath(raw)
+    if PurePosixPath(normalized).is_absolute() or windows.is_absolute() or windows.drive or raw.startswith("\\\\"):
+        return ""
+    parts = [part for part in normalized.split("/") if part not in {"", "."}]
+    if not parts or any(part == ".." for part in parts):
+        return ""
+    return "/".join(parts)
 
 
 def which_any(*names: str) -> str | None:
@@ -318,13 +338,21 @@ def discover_folder_files(root: Path, recursive: bool, output_dir: Path | None =
     return sorted(found, key=lambda p: str(p).lower())
 
 
-def create_job(path: Path, target: str, engine: "Engine") -> Job:
+def create_job(path: Path, target: str, engine: "Engine", relative_dir: str | Path = "") -> Job:
     path = path.expanduser().resolve()
     fmt = source_format(path)
     resolved_target = choose_auto_target(path) if normalize_format(target) == "auto" else normalize_format(target)
     selected_engine = engine.engine_for(fmt, resolved_target) or "unavailable"
     size = path.stat().st_size if path.exists() else 0
-    return Job(uuid.uuid4().hex, str(path), fmt, resolved_target, engine=selected_engine, input_bytes=size)
+    return Job(
+        uuid.uuid4().hex,
+        str(path),
+        fmt,
+        resolved_target,
+        engine=selected_engine,
+        input_bytes=size,
+        relative_dir=safe_relative_dir(relative_dir),
+    )
 
 
 class Engine:

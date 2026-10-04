@@ -92,6 +92,22 @@ class BatchTests(unittest.TestCase):
             self.assertEqual(holder["summary"].counts.get("Failed", 0), 0)
             self.assertEqual(sum(holder["summary"].counts.values()), len(jobs))
 
+    def test_preserve_layout_writes_into_relative_subfolder(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source_dir = root / "input" / "nested"
+            source_dir.mkdir(parents=True)
+            source = source_dir / "note.txt"
+            source.write_text("hello")
+
+            engine = ParallelCopyEngine()
+            job = create_job(source, "txt", engine, relative_dir="nested")
+            summary = BatchRunner(engine, workers=1).run([job], root / "out", layout="preserve")
+
+            self.assertEqual(summary.counts.get("Done"), 1)
+            self.assertEqual((root / "out" / "nested" / "note.txt").read_text(), "hello")
+            self.assertEqual(Path(job.output).resolve(), (root / "out" / "nested" / "note.txt").resolve())
+
     def test_output_reservation_prevents_parallel_name_collision(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

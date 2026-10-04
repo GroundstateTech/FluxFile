@@ -24,11 +24,13 @@ from fluxfile_core import (
     format_matches,
     normalize_format,
     resolve_output,
+    safe_relative_dir,
     should_skip_intake_path,
     source_format,
     which_any,
 )
 from fluxfile_batch import BatchEvent, BatchRunner, BatchSummary, recommended_workers
+from fluxfile_session import load_session, save_session
 
 
 class FluxFileApp(tk.Tk):
@@ -45,6 +47,7 @@ class FluxFileApp(tk.Tk):
         self.target_choice = tk.StringVar(value="auto")
         self.conflict = tk.StringVar(value="suffix")
         self.recursive = tk.BooleanVar(value=False)
+        self.layout = tk.StringVar(value="flat")
         self.plan_text = tk.StringVar(value="Choose a source and target format.")
         self.status_text = tk.StringVar(value="Ready")
         self.progress_text = tk.StringVar(value="0 / 0")
@@ -130,7 +133,14 @@ class FluxFileApp(tk.Tk):
         self.output_entry = ttk.Entry(output, textvariable=self.output_dir)
         self.output_entry.grid(row=0, column=1, sticky="ew")
         self.output_browse_btn = ttk.Button(output, text="Browse", command=self.pick_output, style="Flux.Action.TButton")
-        self.output_browse_btn.grid(row=0, column=2, padx=(8, 0))
+        self.output_browse_btn.grid(row=0, column=2, padx=(8, 12))
+        ttk.Label(output, text="Folder layout").grid(row=0, column=3, padx=(0, 5))
+        self.layout_box = ttk.Combobox(output, textvariable=self.layout, values=["flat", "preserve"], state="readonly", width=10)
+        self.layout_box.grid(row=0, column=4, padx=(0, 12))
+        self.save_session_btn = ttk.Button(output, text="Save queue", command=self.save_queue_session, style="Flux.Action.TButton")
+        self.save_session_btn.grid(row=0, column=5, padx=(0, 7))
+        self.load_session_btn = ttk.Button(output, text="Load queue", command=self.load_queue_session, style="Flux.Action.TButton")
+        self.load_session_btn.grid(row=0, column=6)
 
         queue_box = ttk.LabelFrame(self, text="Queue", padding=(8, 8))
         queue_box.grid(row=4, column=0, padx=14, pady=(0, 7), sticky="nsew")
@@ -196,7 +206,8 @@ class FluxFileApp(tk.Tk):
         self._mutable_widgets = [
             self.source_box, self.target_box, self.apply_btn, self.add_files_btn, self.add_folder_btn,
             self.recursive_btn, self.conflict_box, self.remove_btn, self.retry_btn, self.clear_btn,
-            self.output_entry, self.output_browse_btn, self.rescan_btn,
+            self.output_entry, self.output_browse_btn, self.layout_box, self.save_session_btn,
+            self.load_session_btn, self.rescan_btn,
         ]
 
     def _bind_shortcuts(self):
@@ -208,6 +219,8 @@ class FluxFileApp(tk.Tk):
         self.bind("<F5>", lambda _e: self._refresh_engines())
         self.bind("<Escape>", lambda _e: self.cancel_queue())
         self.bind("<Control-a>", self._select_all)
+        self.bind("<Control-Shift-S>", lambda _e: self.save_queue_session())
+        self.bind("<Control-Shift-L>", lambda _e: self.load_queue_session())
 
     def _select_all(self, _event=None):
         self.tree.selection_set(self.tree.get_children())
@@ -242,7 +255,9 @@ class FluxFileApp(tk.Tk):
             counts[job.status] = counts.get(job.status, 0) + 1
         done = counts.get("Done", 0)
         failed = counts.get("Failed", 0) + counts.get("Unsupported", 0)
-        return f"{len(self.jobs)} items · {done} done · {failed} failed/unsupported"
+        missing = counts.get("Missing", 0)
+        extra = f" · {missing} missing" if missing else ""
+        return f"{len(self.jobs)} items · {done} done · {failed} failed/unsupported{extra}"
 
     def _update_target_choices(self):
         values = compatible_targets(self.source_choice.get())
@@ -291,9 +306,9 @@ class FluxFileApp(tk.Tk):
         except Exception as exc:
             messagebox.showerror(APP_NAME, f"Could not scan folder:\n{exc}")
             return
-        self._add_paths(paths)
+        self._add_paths(paths, root)
 
-    def _add_paths(self, paths: list[Path]):
+    def _add_paths(self, paths: list[Path], root: Path | None = None):
         existing = {job.source for job in self.jobs}
         selected_source = normalize_format(self.source_choice.get())
         selected_target = normalize_format(self.target_choice.get())
@@ -307,8 +322,16 @@ class FluxFileApp(tk.Tk):
             resolved = str(path.expanduser().resolve())
             if resolved in existing:
                 continue
+            relative_dir = ""
+            if root is not None:
+                try:
+                    relative_dir = path.absolute().parent.relative_to(root.expanduser().absolute()).as_posix()
+                    if relative_dir == ".":
+                        relative_dir = ""
+                except (ValueError, OSError):
+                    relative_dir = ""
             try:
-                job = create_job(path, selected_target, self.engine)
+                job = create_job(path, selected_target, self.engine, relative_dir=relative_dir)
             except OSError:
                 continue
             self.jobs.append(job)
@@ -329,12 +352,20 @@ class FluxFileApp(tk.Tk):
             if not format_matches(selected_source, job.source_format):
                 continue
             source = Path(job.source)
+            if not source.is_file():
+                job.status = "Missing"
+                job.engine = "unavailable"
+                job.output = ""
+                job.error = "Source file is missing"
+                self._update_job_row(job)
+                continue
+            job.source_format = source_format(source)
             target = choose_auto_target(source) if selected_target == "auto" else selected_target
             job.target_format = target
             job.engine = self.engine.engine_for(job.source_format, target) or "unavailable"
-            job.status = "Queued"
+            job.status = "Queued" if job.engine != "unavailable" else "Unsupported"
             job.output = ""
-            job.error = ""
+            job.error = "" if job.status == "Queued" else f"No installed engine supports .{job.source_format} → .{target}"
             job.duration_seconds = 0.0
             job.output_bytes = 0
             self._update_job_row(job)
@@ -342,6 +373,75 @@ class FluxFileApp(tk.Tk):
             unsupported += int(job.engine == "unavailable")
         self.plan_text.set(f"Applied to {changed} item(s) · {unsupported} unavailable")
         self._refresh_progress()
+
+    def _session_settings(self) -> dict[str, object]:
+        return {
+            "output_dir": self.output_dir.get(),
+            "source_choice": self.source_choice.get(),
+            "target_choice": self.target_choice.get(),
+            "conflict": self.conflict.get(),
+            "recursive": self.recursive.get(),
+            "layout": self.layout.get(),
+        }
+
+    def save_queue_session(self):
+        if self._running:
+            return
+        path = filedialog.asksaveasfilename(
+            title="Save FluxFile queue",
+            defaultextension=".fluxqueue.json",
+            filetypes=[("FluxFile queue", "*.fluxqueue.json"), ("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            save_session(Path(path), self.jobs, self._session_settings())
+            self.status_text.set(f"Queue saved · {Path(path).name}")
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Could not save queue session:\n{exc}")
+
+    def load_queue_session(self):
+        if self._running:
+            return
+        path = filedialog.askopenfilename(
+            title="Load FluxFile queue",
+            filetypes=[("FluxFile queue", "*.fluxqueue.json"), ("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            jobs, settings = load_session(Path(path))
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Could not load queue session:\n{exc}")
+            return
+
+        self.jobs = jobs
+        self.tree.delete(*self.tree.get_children())
+        self.output_dir.set(settings.get("output_dir") or str(Path.cwd() / "converted"))
+        self.source_choice.set(settings.get("source_choice") if settings.get("source_choice") in SOURCE_FORMATS else "any")
+        self.target_choice.set(settings.get("target_choice") if settings.get("target_choice") in ALL_TARGETS else "auto")
+        self.conflict.set(settings.get("conflict") if settings.get("conflict") in {"suffix", "skip", "overwrite"} else "suffix")
+        self.recursive.set(bool(settings.get("recursive", False)))
+        self.layout.set(settings.get("layout") if settings.get("layout") in {"flat", "preserve"} else "flat")
+
+        missing = 0
+        for job in self.jobs:
+            source = Path(job.source)
+            if not source.is_file():
+                job.status = "Missing"
+                job.engine = "unavailable"
+                job.error = "Source file is missing"
+                missing += 1
+            else:
+                job.source_format = source_format(source)
+                job.engine = self.engine.engine_for(job.source_format, job.target_format) or "unavailable"
+                if job.status == "Queued" and job.engine == "unavailable":
+                    job.status = "Unsupported"
+                    job.error = f"No installed engine supports .{job.source_format} → .{job.target_format}"
+            self._insert_job_row(job)
+        self._update_target_choices()
+        self._refresh_progress()
+        self.status_text.set(f"Loaded {len(self.jobs)} item(s)" + (f" · {missing} missing" if missing else ""))
 
     def pick_output(self):
         if self._running:
@@ -377,12 +477,24 @@ class FluxFileApp(tk.Tk):
         for job in self.jobs:
             if job.id not in selected:
                 continue
+            source = Path(job.source)
+            if not source.is_file():
+                job.status = "Missing"
+                job.output = ""
+                job.error = "Source file is missing"
+                job.engine = "unavailable"
+                self._update_job_row(job)
+                continue
+            job.source_format = source_format(source)
             job.status = "Queued"
             job.output = ""
             job.error = ""
             job.duration_seconds = 0.0
             job.output_bytes = 0
             job.engine = self.engine.engine_for(job.source_format, job.target_format) or "unavailable"
+            if job.engine == "unavailable":
+                job.status = "Unsupported"
+                job.error = f"No installed engine supports .{job.source_format} → .{job.target_format}"
             self._update_job_row(job)
         self._refresh_progress()
 
@@ -402,6 +514,8 @@ class FluxFileApp(tk.Tk):
 
     def _row_values(self, job: Job):
         source = Path(job.source).name
+        if job.relative_dir:
+            source = f"{job.relative_dir}/{source}"
         route = f"{job.source_format} → {job.target_format}"
         result = job.output or job.error
         return source, route, job.engine, job.status, result
@@ -438,7 +552,7 @@ class FluxFileApp(tk.Tk):
 
     def _refresh_progress(self, completed: int | None = None, total: int | None = None):
         total = len(self.jobs) if total is None else total
-        terminal = {"Done", "Failed", "Unsupported", "Skipped", "Cancelled"}
+        terminal = {"Done", "Failed", "Unsupported", "Skipped", "Cancelled", "Missing"}
         completed = sum(job.status in terminal for job in self.jobs) if completed is None else completed
         percent = (completed / total * 100) if total else 0
         self.progressbar.configure(value=percent)
@@ -503,18 +617,23 @@ class FluxFileApp(tk.Tk):
         self.status_text.set("Starting conversion pass…")
         self._refresh_progress()
         conflict = self.conflict.get()
+        layout = self.layout.get()
         self._batch_thread = threading.Thread(
             target=self._run_batch_thread,
-            args=(batch_jobs, out_dir, conflict),
+            args=(batch_jobs, out_dir, conflict, layout),
             daemon=True,
             name="fluxfile-batch",
         )
         self._batch_thread.start()
 
-    def _run_batch_thread(self, jobs: list[Job], out_dir: Path, conflict: str):
+    def _run_batch_thread(self, jobs: list[Job], out_dir: Path, conflict: str, layout: str):
         assert self._runner is not None
         try:
-            summary = self._runner.run(jobs, out_dir, conflict, callback=lambda event: self._ui_queue.put(("batch", event)))
+            summary = self._runner.run(
+                jobs, out_dir, conflict,
+                callback=lambda event: self._ui_queue.put(("batch", event)),
+                layout=layout,
+            )
             self._ui_queue.put(("summary", summary))
         except Exception as exc:
             self._ui_queue.put(("fatal", str(exc)))
@@ -600,6 +719,8 @@ class FluxFileApp(tk.Tk):
             "• Media conversion uses the first video/audio stream.\n"
             "• Archive repacking rejects links, unsafe paths, duplicates, and oversized expanded content.\n"
             "• Existing output files are published atomically after a successful conversion.\n"
+            "• Folder layout can stay flat or preserve recursive source subfolders.\n"
+            "• Save queue / Load queue stores a portable .fluxqueue.json session without embedding file contents.\n"
         )
         text.insert("1.0", body)
         text.configure(state="disabled")
