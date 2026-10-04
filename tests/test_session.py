@@ -169,6 +169,27 @@ class SessionTests(unittest.TestCase):
             self.assertEqual(job.status, "Queued")
             self.assertEqual(job.error, "")
 
+    def test_relink_revives_source_that_reappeared_at_original_path(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "returned.txt"
+            source.write_text("back")
+
+            job = Job(
+                id="returned",
+                source=str(source),
+                source_format="txt",
+                target_format="txt",
+                status="Missing",
+                engine="unavailable",
+                relative_dir="",
+            )
+            relinked, unresolved = relink_missing_jobs([job], root / "unused-root" if False else root, Engine())
+
+            self.assertEqual((relinked, unresolved), (1, 0))
+            self.assertEqual(job.status, "Queued")
+            self.assertEqual(Path(job.source).resolve(), source.resolve())
+
     def test_relink_understands_windows_source_name_on_any_host(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
