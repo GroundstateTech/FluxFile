@@ -106,7 +106,7 @@ class BatchTests(unittest.TestCase):
 
             self.assertEqual(summary.counts.get("Done"), 1)
             self.assertEqual((root / "out" / "nested" / "note.txt").read_text(), "hello")
-            self.assertEqual(Path(job.output), root / "out" / "nested" / "note.txt")
+            self.assertEqual(Path(job.output).resolve(), (root / "out" / "nested" / "note.txt").resolve())
 
     def test_output_reservation_prevents_parallel_name_collision(self):
         with tempfile.TemporaryDirectory() as td:
