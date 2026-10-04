@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.10.0 — 2026-10-03
+
+Bulk workflow and resumability release.
+
+### Added
+
+- Flat vs preserved recursive output-folder layout in the desktop app and CLI.
+- Safe relative-directory metadata on queue jobs.
+- `.fluxqueue.json` queue session save/load with atomic writes.
+- Resume rules that keep valid completed outputs, requeue incomplete work, and flag missing sources.
+- Save/load keyboard shortcuts and queue-path display for recursive jobs.
+- CLI source deduplication when the same file arrives through overlapping arguments.
+- Relative folder metadata and layout mode in conversion reports.
+- Cross-platform tests for preserved folder layout, session round trips, missing-file recovery, and CLI deduplication.
+
+### Fixed
+
+- Applying a new plan can no longer turn a missing source into runnable work.
+- Recursive bulk jobs no longer have to flatten same-named files into suffixed filenames when preserved layout is selected.
+
+
 ## 0.9.0 — 2026-10-03
 
 Workstation architecture, UI cleanup and batch-performance release.
