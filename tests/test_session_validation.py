@@ -28,3 +28,17 @@ class SessionValidationTests(unittest.TestCase):
         self.check_invalid({'schema': SESSION_SCHEMA, 'version': 1,
                             'jobs': [{'id': 'same', 'source': '/missing/one.txt'},
                                      {'id': 'same', 'source': '/missing/two.txt'}]})
+
+    def test_invalid_versions(self):
+        for version in (None, [], {}, True, 1.5, float('inf'), 'invalid'):
+            with self.subTest(version=version):
+                self.check_invalid({'schema': SESSION_SCHEMA, 'version': version, 'jobs': []})
+
+    def test_non_string_layout_falls_back_to_flat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'session.json'
+            for layout in ([], {}, None):
+                path.write_text(json.dumps({'schema': SESSION_SCHEMA, 'version': 2,
+                                            'jobs': [], 'settings': {'layout': layout}}))
+                _, settings = load_session(path)
+                self.assertEqual(settings['layout'], 'flat')
