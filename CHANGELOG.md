@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.11.0 — 2026-10-03
+
+Portable session and missing-source recovery release.
+
+### Added
+
+- Queue session schema v2 with relative source/output references when paths live under the session directory.
+- Move-aware output-directory references.
+- Backward-compatible loading of v1 queue sessions.
+- Bulk **Relink missing** workflow using saved relative folders and original filenames.
+- Per-item **Relink selected source…** context action.
+- `Ctrl+Shift+R` shortcut for missing-source recovery.
+- Cross-platform Windows-path basename recovery for sessions moved between operating systems.
+- Regression tests for workspace moves, v1 compatibility, bulk relinking, and Windows-style missing paths.
+
+### Fixed
+
+- A queue described as portable no longer depends exclusively on stale absolute paths when the session and workspace are moved together.
+- Missing source recovery no longer requires deleting and rebuilding the affected queue entries.
+
+
 ## 0.10.0 — 2026-10-03
 
 Bulk workflow and resumability release.

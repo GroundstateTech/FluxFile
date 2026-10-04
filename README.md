@@ -2,9 +2,21 @@
 
 FluxFile is Groundstate Technology LLC's local-first bulk file conversion workstation.
 
-Version **0.10.0** is the bulk-workflow release. It keeps the 0.9 architecture and conversion engines, then adds recursive folder-layout preservation, queue session save/load, safer resume behavior, CLI input deduplication, and richer reports for large conversion jobs.
+Version **0.11.0** is the portable-session recovery release. It keeps the 0.10 bulk workflow, upgrades queue sessions to a move-aware v2 schema, preserves v1 compatibility, and adds explicit recovery tools for sources that were moved or mounted somewhere else.
 
-## New in 0.10.0
+## New in 0.11.0
+
+### Portable sessions and recovery
+
+- Queue session schema **v2** stores a safe relative reference when a source/output lives inside the folder containing the `.fluxqueue.json` file.
+- Move that whole workspace folder to another drive or machine and FluxFile resolves those relative references from the new session location.
+- External files remain absolute references instead of being rewritten deceptively.
+- Existing queue session **v1** files continue to load.
+- **Relink missing** chooses a new source root and repairs missing jobs from their saved relative folder + filename.
+- Right-click **Relink selected source…** repairs an individual queue item.
+- **Ctrl+Shift+R** opens the bulk relink workflow.
+- Relinked jobs are re-detected, re-sized, and either queued or explicitly marked Unsupported for the currently installed engines.
+- Session files still contain no source-file contents.
 
 ### Bulk workflow
 
@@ -32,6 +44,7 @@ Version **0.10.0** is the bulk-workflow release. It keeps the 0.9 architecture a
   - **Ctrl+A** select all
   - **Ctrl+Shift+S** save queue session
   - **Ctrl+Shift+L** load queue session
+  - **Ctrl+Shift+R** relink missing sources
   - **F5** rescan engines
   - **Esc** cancel
 - Format guide is now a readable resizable window instead of a dense message box.
@@ -41,7 +54,7 @@ Version **0.10.0** is the bulk-workflow release. It keeps the 0.9 architecture a
 ```text
 fluxfile_core.py     format registry, routing, conversion engines, intake/path safety
 fluxfile_batch.py    bounded concurrency, cancellation, output reservation, folder layout, reports
-fluxfile_session.py  queue session serialization and safe resume rules
+fluxfile_session.py  portable queue serialization, safe resume rules, missing-source relinking
 extended_formats.py  FFmpeg/media, subtitle, archive and SVG helpers
 fluxfile.py          desktop UI only; re-exports legacy core imports for compatibility
 fluxfile_cli.py      headless batch client using the same scheduler/core
@@ -149,10 +162,11 @@ python fluxfile_cli.py folder --recursive --to png --conflict suffix --json
 5. Use **Apply to queue** when changing an existing plan.
 6. Choose `flat` or `preserve` folder layout.
 7. Choose `suffix`, `skip`, or `overwrite` for existing outputs.
-8. Optionally **Save queue** if you want to resume the plan later.
-9. Convert.
-10. Cancel if necessary; completed outputs remain valid and unfinished jobs are marked Cancelled.
-11. Select failed/cancelled rows and use **Retry** to explicitly requeue them.
+8. Optionally **Save queue** if you want to resume the plan later. Save it beside the source workspace when you want move-aware relative references.
+9. If a loaded queue reports missing sources, use **Relink missing** to select the replacement source root, or right-click one row and use **Relink selected source…**.
+10. Convert.
+11. Cancel if necessary; completed outputs remain valid and unfinished jobs are marked Cancelled.
+12. Select failed/cancelled rows and use **Retry** to explicitly requeue them.
 
 Completed jobs are not silently rerun on the next pass.
 

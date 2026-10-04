@@ -30,7 +30,7 @@ from fluxfile_core import (
     which_any,
 )
 from fluxfile_batch import BatchEvent, BatchRunner, BatchSummary, recommended_workers
-from fluxfile_session import load_session, save_session
+from fluxfile_session import load_session, relink_job, relink_missing_jobs, save_session
 
 
 class FluxFileApp(tk.Tk):
@@ -108,7 +108,7 @@ class FluxFileApp(tk.Tk):
 
         intake = ttk.Frame(self, padding=(14, 2, 14, 7))
         intake.grid(row=2, column=0, sticky="ew")
-        intake.columnconfigure(8, weight=1)
+        intake.columnconfigure(9, weight=1)
         self.add_files_btn = ttk.Button(intake, text="Add files", command=self.add_files, style="Flux.Action.TButton")
         self.add_files_btn.grid(row=0, column=0, padx=(0, 7))
         self.add_folder_btn = ttk.Button(intake, text="Add folder", command=self.add_folder, style="Flux.Action.TButton")
@@ -122,9 +122,11 @@ class FluxFileApp(tk.Tk):
         self.remove_btn.grid(row=0, column=5, padx=(0, 7))
         self.retry_btn = ttk.Button(intake, text="Retry", command=self.retry_selected, style="Flux.Action.TButton")
         self.retry_btn.grid(row=0, column=6, padx=(0, 7))
+        self.relink_btn = ttk.Button(intake, text="Relink missing", command=self.relink_missing_folder, style="Flux.Action.TButton")
+        self.relink_btn.grid(row=0, column=7, padx=(0, 7))
         self.clear_btn = ttk.Button(intake, text="Clear", command=self.clear, style="Flux.Action.TButton")
-        self.clear_btn.grid(row=0, column=7)
-        ttk.Label(intake, textvariable=self.worker_text).grid(row=0, column=8, sticky="e")
+        self.clear_btn.grid(row=0, column=8)
+        ttk.Label(intake, textvariable=self.worker_text).grid(row=0, column=9, sticky="e")
 
         output = ttk.Frame(self, padding=(14, 0, 14, 8))
         output.grid(row=3, column=0, sticky="ew")
@@ -199,13 +201,14 @@ class FluxFileApp(tk.Tk):
 
         self.context_menu = tk.Menu(self, tearoff=False)
         self.context_menu.add_command(label="Retry selected", command=self.retry_selected)
+        self.context_menu.add_command(label="Relink selected source…", command=self.relink_selected_source)
         self.context_menu.add_command(label="Remove selected", command=self.remove_selected)
         self.context_menu.add_separator()
         self.context_menu.add_command(label="Open selected output", command=self.open_selected_output)
 
         self._mutable_widgets = [
             self.source_box, self.target_box, self.apply_btn, self.add_files_btn, self.add_folder_btn,
-            self.recursive_btn, self.conflict_box, self.remove_btn, self.retry_btn, self.clear_btn,
+            self.recursive_btn, self.conflict_box, self.remove_btn, self.retry_btn, self.relink_btn, self.clear_btn,
             self.output_entry, self.output_browse_btn, self.layout_box, self.save_session_btn,
             self.load_session_btn, self.rescan_btn,
         ]
@@ -221,6 +224,7 @@ class FluxFileApp(tk.Tk):
         self.bind("<Control-a>", self._select_all)
         self.bind("<Control-Shift-S>", lambda _e: self.save_queue_session())
         self.bind("<Control-Shift-L>", lambda _e: self.load_queue_session())
+        self.bind("<Control-Shift-R>", lambda _e: self.relink_missing_folder())
 
     def _select_all(self, _event=None):
         self.tree.selection_set(self.tree.get_children())
@@ -441,7 +445,11 @@ class FluxFileApp(tk.Tk):
             self._insert_job_row(job)
         self._update_target_choices()
         self._refresh_progress()
-        self.status_text.set(f"Loaded {len(self.jobs)} item(s)" + (f" · {missing} missing" if missing else ""))
+        version = settings.get("session_version", 1)
+        self.status_text.set(
+            f"Loaded queue v{version} · {len(self.jobs)} item(s)"
+            + (f" · {missing} missing — use Relink missing" if missing else "")
+        )
 
     def pick_output(self):
         if self._running:
@@ -497,6 +505,52 @@ class FluxFileApp(tk.Tk):
                 job.error = f"No installed engine supports .{job.source_format} → .{job.target_format}"
             self._update_job_row(job)
         self._refresh_progress()
+
+    def relink_selected_source(self):
+        if self._running:
+            return
+        selected = self.tree.selection()
+        if len(selected) != 1:
+            messagebox.showinfo(APP_NAME, "Select exactly one queue item to relink.")
+            return
+        by_id = {job.id: job for job in self.jobs}
+        job = by_id.get(selected[0])
+        if not job:
+            return
+        path = filedialog.askopenfilename(title="Choose replacement source file")
+        if not path:
+            return
+        try:
+            relink_job(job, Path(path), self.engine)
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Could not relink source:\n{exc}")
+            return
+        self._update_job_row(job)
+        self._refresh_progress()
+        self.status_text.set(f"Relinked {Path(job.source).name}")
+
+    def relink_missing_folder(self):
+        if self._running:
+            return
+        missing = [job for job in self.jobs if job.status == "Missing" or not Path(job.source).is_file()]
+        if not missing:
+            messagebox.showinfo(APP_NAME, "There are no missing source files to relink.")
+            return
+        folder = filedialog.askdirectory(
+            title="Choose the new source root",
+            mustexist=True,
+        )
+        if not folder:
+            return
+        try:
+            relinked, unresolved = relink_missing_jobs(self.jobs, Path(folder), self.engine)
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Could not relink missing sources:\n{exc}")
+            return
+        for job in self.jobs:
+            self._update_job_row(job)
+        self._refresh_progress()
+        self.status_text.set(f"Relinked {relinked} source(s) · {unresolved} still missing")
 
     def _insert_job_row(self, job: Job):
         if self.tree.exists(job.id):
@@ -720,7 +774,9 @@ class FluxFileApp(tk.Tk):
             "• Archive repacking rejects links, unsafe paths, duplicates, and oversized expanded content.\n"
             "• Existing output files are published atomically after a successful conversion.\n"
             "• Folder layout can stay flat or preserve recursive source subfolders.\n"
-            "• Save queue / Load queue stores a portable .fluxqueue.json session without embedding file contents.\n"
+            "• Queue session v2 stores safe relative path references when files live beside/below the session file.\n"
+            "• Older v1 queue sessions still load. Missing sources can be repaired with Relink missing or Relink selected source.\n"
+            "• Session files store paths and queue metadata only; source file contents are never embedded.\n"
         )
         text.insert("1.0", body)
         text.configure(state="disabled")

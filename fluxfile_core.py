@@ -28,7 +28,7 @@ from extended_formats import (
 )
 
 APP_NAME = "FluxFile"
-VERSION = "0.10.0"
+VERSION = "0.11.0"
 MIN_PYTHON = (3, 10)
 SUBPROCESS_TIMEOUT_SECONDS = 300
 
