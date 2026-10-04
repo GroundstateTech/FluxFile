@@ -31,6 +31,7 @@ from fluxfile_core import (
 )
 from fluxfile_batch import BatchEvent, BatchRunner, BatchSummary, recommended_workers
 from fluxfile_session import load_session, relink_job, relink_missing_jobs, save_session
+from fluxfile_queue import filter_jobs, job_matches, requeue_job, requeue_problems, remove_completed
 
 
 class FluxFileApp(tk.Tk):
@@ -48,6 +49,9 @@ class FluxFileApp(tk.Tk):
         self.conflict = tk.StringVar(value="suffix")
         self.recursive = tk.BooleanVar(value=False)
         self.layout = tk.StringVar(value="flat")
+        self.queue_search = tk.StringVar(value="")
+        self.queue_filter = tk.StringVar(value="all")
+        self.queue_view_text = tk.StringVar(value="0 / 0 shown")
         self.plan_text = tk.StringVar(value="Choose a source and target format.")
         self.status_text = tk.StringVar(value="Ready")
         self.progress_text = tk.StringVar(value="0 / 0")
@@ -146,8 +150,28 @@ class FluxFileApp(tk.Tk):
 
         queue_box = ttk.LabelFrame(self, text="Queue", padding=(8, 8))
         queue_box.grid(row=4, column=0, padx=14, pady=(0, 7), sticky="nsew")
-        queue_box.rowconfigure(0, weight=1)
+        queue_box.rowconfigure(1, weight=1)
         queue_box.columnconfigure(0, weight=1)
+
+        queue_tools = ttk.Frame(queue_box)
+        queue_tools.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 7))
+        queue_tools.columnconfigure(0, weight=1)
+        self.queue_search_entry = ttk.Entry(queue_tools, textvariable=self.queue_search)
+        self.queue_search_entry.grid(row=0, column=0, sticky="ew", padx=(0, 7))
+        self.queue_search_entry.insert(0, "")
+        self.queue_filter_box = ttk.Combobox(
+            queue_tools,
+            textvariable=self.queue_filter,
+            values=["all", "queued", "done", "problems", "missing", "unsupported"],
+            state="readonly",
+            width=12,
+        )
+        self.queue_filter_box.grid(row=0, column=1, padx=(0, 7))
+        self.retry_problems_btn = ttk.Button(queue_tools, text="Retry problems", command=self.retry_problem_jobs, style="Flux.Action.TButton")
+        self.retry_problems_btn.grid(row=0, column=2, padx=(0, 7))
+        self.clear_done_btn = ttk.Button(queue_tools, text="Clear done", command=self.clear_completed_jobs, style="Flux.Action.TButton")
+        self.clear_done_btn.grid(row=0, column=3, padx=(0, 7))
+        ttk.Label(queue_tools, textvariable=self.queue_view_text, width=15, anchor="e").grid(row=0, column=4)
 
         self.tree = ttk.Treeview(
             queue_box,
@@ -165,15 +189,15 @@ class FluxFileApp(tk.Tk):
         for key, label, width in columns:
             self.tree.heading(key, text=label)
             self.tree.column(key, width=width, minwidth=70, anchor="w")
-        self.tree.grid(row=0, column=0, sticky="nsew")
+        self.tree.grid(row=1, column=0, sticky="nsew")
         self.tree.bind("<<TreeviewSelect>>", self._selection_changed)
         self.tree.bind("<Double-1>", lambda _e: self.open_selected_output())
         self.tree.bind("<Button-3>", self._show_context_menu)
 
         yscroll = ttk.Scrollbar(queue_box, command=self.tree.yview)
-        yscroll.grid(row=0, column=1, sticky="ns")
+        yscroll.grid(row=1, column=1, sticky="ns")
         xscroll = ttk.Scrollbar(queue_box, orient="horizontal", command=self.tree.xview)
-        xscroll.grid(row=1, column=0, sticky="ew")
+        xscroll.grid(row=2, column=0, sticky="ew")
         self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
 
         detail = ttk.Label(self, textvariable=self.details_text, anchor="w")
@@ -210,7 +234,8 @@ class FluxFileApp(tk.Tk):
             self.source_box, self.target_box, self.apply_btn, self.add_files_btn, self.add_folder_btn,
             self.recursive_btn, self.conflict_box, self.remove_btn, self.retry_btn, self.relink_btn, self.clear_btn,
             self.output_entry, self.output_browse_btn, self.layout_box, self.save_session_btn,
-            self.load_session_btn, self.rescan_btn,
+            self.load_session_btn, self.queue_search_entry, self.queue_filter_box,
+            self.retry_problems_btn, self.clear_done_btn, self.rescan_btn,
         ]
 
     def _bind_shortcuts(self):
@@ -225,6 +250,14 @@ class FluxFileApp(tk.Tk):
         self.bind("<Control-Shift-S>", lambda _e: self.save_queue_session())
         self.bind("<Control-Shift-L>", lambda _e: self.load_queue_session())
         self.bind("<Control-Shift-R>", lambda _e: self.relink_missing_folder())
+        self.bind("<Control-f>", lambda _e: self._focus_queue_search())
+        self.queue_search.trace_add("write", lambda *_: self._refresh_queue_view())
+        self.queue_filter.trace_add("write", lambda *_: self._refresh_queue_view())
+
+    def _focus_queue_search(self):
+        self.queue_search_entry.focus_set()
+        self.queue_search_entry.selection_range(0, "end")
+        return "break"
 
     def _select_all(self, _event=None):
         self.tree.selection_set(self.tree.get_children())
@@ -444,6 +477,7 @@ class FluxFileApp(tk.Tk):
                     job.error = f"No installed engine supports .{job.source_format} → .{job.target_format}"
             self._insert_job_row(job)
         self._update_target_choices()
+        self._refresh_queue_view()
         self._refresh_progress()
         version = settings.get("session_version", 1)
         self.status_text.set(
@@ -463,6 +497,7 @@ class FluxFileApp(tk.Tk):
             return
         self.jobs.clear()
         self.tree.delete(*self.tree.get_children())
+        self._refresh_queue_view()
         self._refresh_progress()
         self.details_text.set("Select a queue item to see its full path and result.")
 
@@ -476,6 +511,7 @@ class FluxFileApp(tk.Tk):
         for item in selected:
             if self.tree.exists(item):
                 self.tree.delete(item)
+        self._refresh_queue_view()
         self._refresh_progress()
 
     def retry_selected(self):
@@ -485,26 +521,25 @@ class FluxFileApp(tk.Tk):
         for job in self.jobs:
             if job.id not in selected:
                 continue
-            source = Path(job.source)
-            if not source.is_file():
-                job.status = "Missing"
-                job.output = ""
-                job.error = "Source file is missing"
-                job.engine = "unavailable"
-                self._update_job_row(job)
-                continue
-            job.source_format = source_format(source)
-            job.status = "Queued"
-            job.output = ""
-            job.error = ""
-            job.duration_seconds = 0.0
-            job.output_bytes = 0
-            job.engine = self.engine.engine_for(job.source_format, job.target_format) or "unavailable"
-            if job.engine == "unavailable":
-                job.status = "Unsupported"
-                job.error = f"No installed engine supports .{job.source_format} → .{job.target_format}"
+            requeue_job(job, self.engine)
             self._update_job_row(job)
         self._refresh_progress()
+
+    def retry_problem_jobs(self):
+        if self._running:
+            return
+        queued, unresolved = requeue_problems(self.jobs, self.engine)
+        self._refresh_queue_view()
+        self._refresh_progress()
+        self.status_text.set(f"Requeued {queued} problem job(s) · {unresolved} unresolved")
+
+    def clear_completed_jobs(self):
+        if self._running:
+            return
+        self.jobs, removed = remove_completed(self.jobs)
+        self._refresh_queue_view()
+        self._refresh_progress()
+        self.status_text.set(f"Cleared {removed} completed job(s)" if removed else "No completed jobs to clear")
 
     def relink_selected_source(self):
         if self._running:
@@ -547,22 +582,51 @@ class FluxFileApp(tk.Tk):
         except Exception as exc:
             messagebox.showerror(APP_NAME, f"Could not relink missing sources:\n{exc}")
             return
-        for job in self.jobs:
-            self._update_job_row(job)
+        self._refresh_queue_view()
         self._refresh_progress()
         self.status_text.set(f"Relinked {relinked} source(s) · {unresolved} still missing")
 
-    def _insert_job_row(self, job: Job):
-        if self.tree.exists(job.id):
-            self._update_job_row(job)
-            return
-        self.tree.insert("", "end", iid=job.id, values=self._row_values(job))
+    def _job_is_visible(self, job: Job) -> bool:
+        return job_matches(job, self.queue_search.get(), self.queue_filter.get())
 
-    def _update_job_row(self, job: Job):
+    def _refresh_queue_view(self):
+        selected = set(self.tree.selection())
+        visible = filter_jobs(self.jobs, self.queue_search.get(), self.queue_filter.get())
+        visible_ids = {job.id for job in visible}
+        for item in self.tree.get_children():
+            if item not in visible_ids:
+                self.tree.delete(item)
+        for job in visible:
+            if self.tree.exists(job.id):
+                self.tree.item(job.id, values=self._row_values(job))
+            else:
+                self.tree.insert("", "end", iid=job.id, values=self._row_values(job))
+        restore = [item for item in selected if item in visible_ids]
+        if restore:
+            self.tree.selection_set(restore)
+        self.queue_view_text.set(f"{len(visible)} / {len(self.jobs)} shown")
+
+    def _insert_job_row(self, job: Job):
+        if not self._job_is_visible(job):
+            if self.tree.exists(job.id):
+                self.tree.delete(job.id)
+            self.queue_view_text.set(f"{len(self.tree.get_children())} / {len(self.jobs)} shown")
+            return
         if self.tree.exists(job.id):
             self.tree.item(job.id, values=self._row_values(job))
         else:
-            self._insert_job_row(job)
+            self.tree.insert("", "end", iid=job.id, values=self._row_values(job))
+        self.queue_view_text.set(f"{len(self.tree.get_children())} / {len(self.jobs)} shown")
+
+    def _update_job_row(self, job: Job):
+        if self._job_is_visible(job):
+            if self.tree.exists(job.id):
+                self.tree.item(job.id, values=self._row_values(job))
+            else:
+                self.tree.insert("", "end", iid=job.id, values=self._row_values(job))
+        elif self.tree.exists(job.id):
+            self.tree.delete(job.id)
+        self.queue_view_text.set(f"{len(self.tree.get_children())} / {len(self.jobs)} shown")
         if job.id in self.tree.selection():
             self._selection_changed()
 
@@ -774,6 +838,9 @@ class FluxFileApp(tk.Tk):
             "• Archive repacking rejects links, unsafe paths, duplicates, and oversized expanded content.\n"
             "• Existing output files are published atomically after a successful conversion.\n"
             "• Folder layout can stay flat or preserve recursive source subfolders.\n"
+            "• Queue search/status filters change only the view; hidden jobs remain in the conversion queue.\n"
+            "• Retry problems re-evaluates Failed/Unsupported/Skipped/Cancelled/Missing jobs against the current filesystem and engines.\n"
+            "• Clear done removes completed rows without touching their output files.\n"
             "• Queue session v2 stores safe relative path references when files live beside/below the session file.\n"
             "• Older v1 queue sessions still load. Missing sources can be repaired with Relink missing or Relink selected source.\n"
             "• Session files store paths and queue metadata only; source file contents are never embedded.\n"
