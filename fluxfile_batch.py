@@ -257,7 +257,7 @@ class BatchRunner:
         with csv_tmp.open("w", newline="", encoding="utf-8") as fh:
             fields = [
                 "source", "source_format", "target_format", "engine", "status", "output", "error",
-                "duration_seconds", "input_bytes", "output_bytes",
+                "duration_seconds", "input_bytes", "output_bytes", "relative_dir",
             ]
             writer = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
             writer.writeheader()
