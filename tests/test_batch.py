@@ -41,6 +41,43 @@ class ParallelCopyEngine(Engine):
 
 
 class BatchTests(unittest.TestCase):
+    def test_overwrite_preserves_every_queued_source(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            incoming = root / "incoming"
+            incoming.mkdir()
+            first = incoming / "same.txt"
+            second = root / "same.txt"
+            first.write_text("incoming original")
+            second.write_text("queued original")
+            engine = ParallelCopyEngine()
+            jobs = [create_job(path, "txt", engine) for path in (first, second)]
+            summary = BatchRunner(engine, workers=2).run(jobs, root, "overwrite")
+            self.assertEqual(summary.counts, {"Done": 2})
+            self.assertEqual(first.read_text(), "incoming original")
+            self.assertEqual(second.read_text(), "queued original")
+            self.assertEqual([Path(job.output).read_text() for job in jobs],
+                             ["incoming original", "queued original"])
+
+    def test_overwrite_preserves_source_through_output_directory_symlink(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            real = root / "real"
+            real.mkdir()
+            alias = root / "alias"
+            try:
+                alias.symlink_to(real, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("Directory symlinks unavailable")
+            source = real / "same.txt"
+            source.write_text("original")
+            engine = ParallelCopyEngine()
+            job = create_job(source, "txt", engine)
+            summary = BatchRunner(engine, workers=1).run([job], alias, "overwrite")
+            self.assertEqual(summary.counts, {"Done": 1})
+            self.assertNotEqual(Path(job.output).resolve(), source.resolve())
+            self.assertEqual(source.read_text(), "original")
+
     def test_parallel_runner_uses_multiple_workers_and_unique_outputs(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

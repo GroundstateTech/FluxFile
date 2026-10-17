@@ -257,8 +257,8 @@ def resolve_output(
     reserved = reserved if reserved is not None else set()
     base = out_dir / f"{source_stem(source)}.{target}"
 
-    if base not in reserved and (not base.exists() or conflict == "overwrite"):
-        reserved.add(base)
+    if base.resolve() not in reserved and (not base.exists() or conflict == "overwrite"):
+        reserved.add(base.resolve())
         return base
     if conflict == "skip":
         return None
@@ -266,8 +266,8 @@ def resolve_output(
     n = 2
     while True:
         candidate = out_dir / f"{source_stem(source)}_{n}.{target}"
-        if candidate not in reserved and not candidate.exists():
-            reserved.add(candidate)
+        if candidate.resolve() not in reserved and not candidate.exists():
+            reserved.add(candidate.resolve())
             return candidate
         n += 1
 
