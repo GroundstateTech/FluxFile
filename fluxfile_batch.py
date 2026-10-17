@@ -274,4 +274,3 @@ class BatchRunner:
             writer.writerows(asdict(job) for job in jobs)
         os.replace(csv_tmp, csv_report)
         return json_report, csv_report
-

@@ -690,4 +690,3 @@ class Engine:
             shutil.move(str(produced), str(output))
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
-
