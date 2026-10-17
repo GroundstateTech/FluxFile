@@ -129,7 +129,9 @@ class BatchRunner:
         out_dir.mkdir(parents=True, exist_ok=True)
         total = len(jobs)
         completed = 0
-        reserved: set[Path] = set()
+        # Inputs may already live in the output folder. Reserve every source
+        # before planning so overwrite cannot destroy this or a later job's input.
+        reserved: set[Path] = {Path(job.source).expanduser().resolve() for job in jobs}
         planned: list[tuple[Job, Path]] = []
 
         self._emit(callback, BatchEvent("start", completed=0, total=total, message=f"Using {self.workers} worker(s)"))
