@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -254,6 +255,8 @@ def resolve_output(
     the same destination before either file exists.
     """
     target = normalize_format(target)
+    if not re.fullmatch(r'[a-z0-9][a-z0-9_-]*', target):
+        raise ValueError('Target format must be a file extension, not a path.')
     reserved = reserved if reserved is not None else set()
     base = out_dir / f"{source_stem(source)}.{target}"
 
