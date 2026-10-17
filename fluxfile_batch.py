@@ -154,7 +154,15 @@ class BatchRunner:
             relative_dir = safe_relative_dir(job.relative_dir)
             if layout == "preserve" and relative_dir:
                 job_out_dir = out_dir / Path(relative_dir)
-            output = resolve_output(Path(job.source), job_out_dir, normalize_format(job.target_format), conflict, reserved)
+            try:
+                output = resolve_output(Path(job.source), job_out_dir, normalize_format(job.target_format), conflict, reserved)
+            except ValueError as exc:
+                job.status = "Failed"
+                job.output = ""
+                job.error = str(exc)
+                completed += 1
+                self._emit(callback, BatchEvent("job", job=job, completed=completed, total=total))
+                continue
             if output is None:
                 job.status = "Skipped"
                 job.output = ""
@@ -266,3 +274,4 @@ class BatchRunner:
             writer.writerows(asdict(job) for job in jobs)
         os.replace(csv_tmp, csv_report)
         return json_report, csv_report
+

@@ -1,4 +1,5 @@
 import shutil
+import json
 import tempfile
 import threading
 import time
@@ -7,6 +8,7 @@ from pathlib import Path
 
 from fluxfile_batch import BatchRunner
 from fluxfile_core import ConversionCancelled, Engine, create_job, discover_folder_files, resolve_output
+from fluxfile_session import load_session, SESSION_SCHEMA
 
 
 class ParallelCopyEngine(Engine):
@@ -41,6 +43,32 @@ class ParallelCopyEngine(Engine):
 
 
 class BatchTests(unittest.TestCase):
+    def test_imported_target_path_cannot_escape_output_directory(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / 'source.txt'
+            source.write_text('original')
+            malicious = 'txt/../../../escaped.txt'
+            queue = root / 'queue.json'
+            queue.write_text(json.dumps({'schema': SESSION_SCHEMA, 'version': 1, 'jobs': [
+                {'id': 'bad', 'source': str(source), 'source_format': malicious, 'target_format': malicious},
+                {'id': 'good', 'source': str(source), 'source_format': 'txt', 'target_format': 'txt'},
+            ]}))
+            jobs, _ = load_session(queue)
+            output = root / 'work' / 'out'
+            summary = BatchRunner(Engine(), workers=1).run(jobs, output)
+            self.assertEqual(summary.counts, {'Failed': 1, 'Done': 1})
+            self.assertIn('not a path', jobs[0].error)
+            self.assertFalse((root / 'escaped.txt').exists())
+            self.assertEqual(Path(jobs[1].output).read_text(), 'original')
+            self.assertEqual(source.read_text(), 'original')
+
+    def test_output_format_rejects_path_separators_and_empty_extension(self):
+        with tempfile.TemporaryDirectory() as td:
+            for target in ('txt/../../escape.txt', r'txt\..\escape.txt', '', 'txt:stream'):
+                with self.subTest(target=target), self.assertRaises(ValueError):
+                    resolve_output(Path('input.txt'), Path(td), target, 'suffix')
+
     def test_overwrite_preserves_every_queued_source(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -183,3 +211,4 @@ class BatchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
