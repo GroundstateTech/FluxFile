@@ -30,3 +30,5 @@ Export `.fluxqueue.json` for portable queues. Automatic recovery is per-user: Wi
 
 Verify representative conversions with installed external engines and desktop UI. Preserve inputs and inspect fidelity; format availability alone does not prove a lossless conversion.
 
+See [release verification](docs/RELEASE_READINESS.md) for local dependency capture, platform checks, and packaging gates without GitHub artifact storage.
+
