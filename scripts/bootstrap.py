@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-MIN_PYTHON = (3, 10)
+MIN_PYTHON = (3, 11)
 
 
 def digest_file(path: Path) -> str:

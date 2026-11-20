@@ -10,15 +10,15 @@ if not defined PY_CMD (
 )
 
 if not defined PY_CMD (
-  echo FluxFile requires Python 3.10 or newer.
+  echo FluxFile requires Python 3.11 or newer.
   echo Install Python from python.org and make sure the Python launcher or python.exe is on PATH.
   pause
   exit /b 1
 )
 
-%PY_CMD% -c "import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)"
+%PY_CMD% -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"
 if errorlevel 1 (
-  echo FluxFile requires Python 3.10 or newer.
+  echo FluxFile requires Python 3.11 or newer.
   %PY_CMD% --version
   pause
   exit /b 1
