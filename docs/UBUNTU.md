@@ -1,6 +1,6 @@
 # Ubuntu support
 
-FluxFile is supported as a desktop application on Ubuntu 22.04 LTS and Ubuntu 24.04 LTS with Python 3.10 or newer.
+FluxFile is supported as a desktop application on Ubuntu 22.04 LTS and Ubuntu 24.04 LTS **only when using Python 3.11 or newer**. Ubuntu 22.04's default Python 3.10 is insufficient for the current Pillow 13 dependency; install/select a supported interpreter before running the launcher. Do not overwrite the OS system Python.
 
 ## Install system prerequisites
 
