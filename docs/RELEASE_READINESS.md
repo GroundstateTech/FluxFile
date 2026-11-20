@@ -18,6 +18,10 @@ git rev-parse HEAD > release-commit.txt
 
 The requirements describe supported ranges. `release-dependencies.txt` records one actual environment, including transitive dependencies; it is not a universal cross-platform lockfile. Keep this record with the Python/OS versions and any candidate package on your own machine. Do not commit local file paths or private conversion reports.
 
+## Runtime compatibility gate (2026-11-20)
+
+Core `requirements.txt` requires `Pillow>=13.0.0,<14`, whose declared interpreter requirement is **Python >=3.11**. The earlier 3.10 CI jobs and launchers could therefore fail during dependency installation, before FluxFile tests began. Keep the Windows/Ubuntu CI floor, `scripts/doctor.py`, `scripts/bootstrap.py` and launchers aligned at Python 3.11+; do not work around it by downgrading to a vulnerable older Pillow series. If support for Python 3.10 becomes essential, resolve compatible patched dependencies and their security status first, and document that as a separate reviewed decision.
+
 ## Required before a public product release
 
 - Record the chosen source commit, version, Python/OS versions, dependency inventory, and external converter versions.
