@@ -160,7 +160,7 @@ sudo apt install -y libcairo2
 
 ### Windows
 
-Install Python 3.10+ and optionally Pandoc, LibreOffice, and FFmpeg, then run:
+Install Python 3.11+ and optionally Pandoc, LibreOffice, and FFmpeg, then run:
 
 ```bat
 run_fluxfile.bat
@@ -208,7 +208,7 @@ python fluxfile_cli.py --engines
 python -m unittest discover -s tests -v
 ```
 
-CI executes the core suite on **Windows and Ubuntu with Python 3.10–3.14**, plus an extended Ubuntu job with FFmpeg/Cairo.
+CI executes the core suite on **Windows and Ubuntu with Python 3.11–3.14**, plus an extended Ubuntu job with FFmpeg/Cairo.
 
 ## Repository layout
 
