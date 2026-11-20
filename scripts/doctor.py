@@ -8,7 +8,7 @@ import shutil
 import sys
 from pathlib import Path
 
-MIN_PYTHON = (3, 10)
+MIN_PYTHON = (3, 11)
 REQUIRED_MODULES = ("PIL", "pandas", "openpyxl", "odf", "xlrd", "pymupdf", "pdf2docx")
 ROOT = Path(__file__).resolve().parents[1]
 
