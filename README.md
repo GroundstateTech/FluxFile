@@ -236,3 +236,7 @@ docs/UBUNTU.md              Ubuntu setup and troubleshooting
 FluxFile performs conversion locally and does not upload source files to Groundstate or a cloud conversion service.
 
 Copyright © 2026 Groundstate Technology LLC.
+
+## Operational role and maintainer handoff
+
+See [operational role and handoff](docs/OPERATING_ROLE_AND_HANDOFF.md) for this project's place in Groundstate's programs, a concrete demonstration to capture, and the record needed for independent maintenance. These are acceptance criteria, not claims of completed validation.
