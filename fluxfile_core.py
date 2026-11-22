@@ -380,6 +380,10 @@ class Engine:
             "pdf2docx": importlib.util.find_spec("pdf2docx") is not None,
             "pymupdf": importlib.util.find_spec("pymupdf") is not None,
         }
+        self._table_backends = {
+            ext: importlib.util.find_spec(module) is not None
+            for ext, module in {".xls": "xlrd", ".xlsx": "openpyxl", ".ods": "odf"}.items()
+        }
         self._route_cache: dict[tuple[str, str], str | None] = {}
         self._cancel_state = threading.local()
         self._image_save_exts: set[str] = set()
@@ -418,7 +422,12 @@ class Engine:
         elif src in IMAGE_EXTS and dst in self._image_save_exts:
             engine = "pillow" if self._capabilities["pillow"] else None
         elif src in TABLE_EXTS and target_fmt in TABLE_TARGETS:
-            engine = "pandas" if self._capabilities["pandas"] else None
+            if (
+                self._capabilities["pandas"]
+                and self._table_backends.get(src, True)
+                and self._table_backends.get(dst, True)
+            ):
+                engine = "pandas"
         elif src == ".pdf" and dst == ".docx":
             engine = "pdf2docx" if self._capabilities["pdf2docx"] else None
         elif src == ".pdf" and dst == ".txt":
