@@ -145,7 +145,7 @@ class BatchRunner:
             if not engine_name:
                 job.status = "Unsupported"
                 job.output = ""
-                job.error = f"No installed engine supports .{job.source_format} → .{job.target_format}"
+                job.error = self.engine.unavailable_route(job.source_format, job.target_format)
                 completed += 1
                 self._emit(callback, BatchEvent("job", job=job, completed=completed, total=total))
                 continue

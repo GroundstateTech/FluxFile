@@ -213,7 +213,7 @@ def relink_job(job: Job, source: Path, engine: Engine) -> Job:
     job.engine = engine.engine_for(job.source_format, job.target_format) or "unavailable"
     job.status = "Queued" if job.engine != "unavailable" else "Unsupported"
     if job.status == "Unsupported":
-        job.error = f"No installed engine supports .{job.source_format} → .{job.target_format}"
+        job.error = engine.unavailable_route(job.source_format, job.target_format)
     return job
 
 

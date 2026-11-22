@@ -160,13 +160,36 @@ sudo apt install -y libcairo2
 
 ### Windows
 
-Install Python 3.11+ and optionally Pandoc, LibreOffice, and FFmpeg, then run:
+Install Python 3.11+ and start FluxFile from its folder:
 
 ```bat
 run_fluxfile.bat
 ```
 
 The launchers validate Python, repair an incomplete `.venv`, and only reinstall Python requirements when `requirements.txt` changes.
+
+#### Windows engine setup
+
+On the Windows workstation, run the commands for the formats you need in PowerShell:
+
+```powershell
+winget install --id Gyan.FFmpeg --exact --source winget
+winget install --id TheDocumentFoundation.LibreOffice --exact --source winget
+winget install --id JohnMacFarlane.Pandoc --exact --source winget
+```
+
+FFmpeg handles audio, video and audio extraction. LibreOffice handles Office and presentation routes, including PDF export. Pandoc handles markup, documents and ebooks. Image, table and PDF engines installed by the FluxFile launcher can run independently.
+
+Restart FluxFile after installation or use **Rescan engines**. FluxFile looks on PATH, in standard Windows installation folders, in your user WinGet Links folder, and in application-local engine folders. For portable installs, place trusted binaries and their required companion files in `engines/ffmpeg/bin`, `engines/pandoc`, or `engines/libreoffice/program` under the FluxFile folder.
+
+From the FluxFile folder, check which engine executables were found and test a media conversion with a clip that has an audio track:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\doctor.py --strict
+.\.venv\Scripts\python.exe fluxfile_cli.py .\sample.mp4 --to mp3 --output-dir converted
+```
+
+The specific decoder or encoder available depends on the FFmpeg build. A route can also fail when a file has no required stream, is damaged, or is protected. SVG conversion separately requires the optional CairoSVG Python requirements and the native Cairo runtime.
 
 ## CLI
 

@@ -143,7 +143,7 @@ class FluxFileApp(tk.Tk):
         self.apply_btn = ttk.Button(plan, text="Apply to queue", command=self.apply_plan_to_queue, style="Flux.Action.TButton")
         self.apply_btn.grid(row=0, column=4, padx=(0, 12))
         ttk.Separator(plan, orient="vertical").grid(row=0, column=5, sticky="ns", padx=6)
-        ttk.Label(plan, textvariable=self.plan_text).grid(row=0, column=7, sticky="e")
+        ttk.Label(plan, textvariable=self.plan_text, wraplength=365).grid(row=0, column=7, sticky="e")
 
         intake = ttk.Frame(self, padding=(14, 2, 14, 7))
         intake.grid(row=2, column=0, sticky="ew")
@@ -370,7 +370,7 @@ class FluxFileApp(tk.Tk):
             self.plan_text.set(f".{src} → recommended output")
             return
         engine = self.engine.engine_for(src, target)
-        self.plan_text.set(f".{src} → .{target} · {engine or 'engine unavailable'}")
+        self.plan_text.set(f".{src} → .{target} · {engine}" if engine else self.engine.unavailable_route(src, target))
 
     def add_files(self):
         if self._running:
@@ -460,7 +460,7 @@ class FluxFileApp(tk.Tk):
             job.engine = self.engine.engine_for(job.source_format, target) or "unavailable"
             job.status = "Queued" if job.engine != "unavailable" else "Unsupported"
             job.output = ""
-            job.error = "" if job.status == "Queued" else f"No installed engine supports .{job.source_format} → .{target}"
+            job.error = "" if job.status == "Queued" else self.engine.unavailable_route(job.source_format, target)
             job.duration_seconds = 0.0
             job.output_bytes = 0
             self._update_job_row(job)
@@ -536,7 +536,7 @@ class FluxFileApp(tk.Tk):
                 job.engine = self.engine.engine_for(job.source_format, job.target_format) or "unavailable"
                 if job.status == "Queued" and job.engine == "unavailable":
                     job.status = "Unsupported"
-                    job.error = f"No installed engine supports .{job.source_format} → .{job.target_format}"
+                    job.error = self.engine.unavailable_route(job.source_format, job.target_format)
             self._insert_job_row(job)
         self._update_target_choices()
         self._refresh_queue_view()

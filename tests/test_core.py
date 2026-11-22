@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from fluxfile_core import find_external_engines
+
 from fluxfile import (
     Engine,
     choose_auto_target,
@@ -18,6 +20,35 @@ from fluxfile import (
 
 
 class CoreTests(unittest.TestCase):
+    def test_windows_finds_engines_without_path_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            local, programs = root / "Local App Data", root / "Program Files"
+            ffmpeg = local / "Microsoft" / "WinGet" / "Links" / "ffmpeg.exe"
+            pandoc = programs / "Pandoc" / "pandoc.exe"
+            soffice = programs / "LibreOffice" / "program" / "soffice.com"
+            for binary in (ffmpeg, pandoc, soffice):
+                binary.parent.mkdir(parents=True, exist_ok=True)
+                binary.touch()
+
+            with (
+                patch("fluxfile_core.sys.platform", "win32"),
+                patch("fluxfile_core.which_any", return_value=None),
+                patch.dict("fluxfile_core.os.environ", {
+                    "LOCALAPPDATA": str(local), "ProgramFiles": str(programs),
+                    "ProgramW6432": str(programs), "ProgramFiles(x86)": str(programs),
+                }),
+            ):
+                self.assertEqual(find_external_engines(), {
+                    "ffmpeg": str(ffmpeg), "pandoc": str(pandoc), "libreoffice": str(soffice),
+                })
+
+    def test_unavailable_media_route_identifies_ffmpeg(self):
+        engine = Engine()
+        engine.ffmpeg = None
+        self.assertIn("requires FFmpeg", engine.unavailable_route("mp4", "mp3"))
+        self.assertNotIn("requires FFmpeg", engine.unavailable_route("mp3", "png"))
+
     def test_normalize_format(self):
         self.assertEqual(normalize_format(".DOCX"), "docx")
         self.assertEqual(normalize_format("markdown"), "md")
