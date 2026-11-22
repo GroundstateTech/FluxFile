@@ -192,6 +192,8 @@ From the FluxFile folder, check which engine executables were found and test a m
 
 The specific decoder or encoder available depends on the FFmpeg build. A route can also fail when a file has no required stream, is damaged, or is protected. SVG conversion separately requires the optional CairoSVG Python requirements and the native Cairo runtime.
 
+The desktop opens in dark mode. Use **Light mode** in the top toolbar to change appearance for the current session. System dialogs follow the operating system theme. See [desktop packaging readiness](docs/RELEASE_READINESS.md#desktop-packaging-draft) for the future executable build.
+
 ## CLI
 
 The CLI now accepts multiple files and folders and uses the same batch scheduler as the GUI:

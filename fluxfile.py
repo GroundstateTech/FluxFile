@@ -38,6 +38,7 @@ from fluxfile_core import (
 from fluxfile_batch import BatchEvent, BatchRunner, BatchSummary, recommended_workers
 from fluxfile_session import load_session, relink_job, relink_missing_jobs, save_session
 from fluxfile_queue import filter_jobs, job_matches, requeue_job, requeue_problems, remove_completed
+from fluxfile_theme import color_classic_widget, configure_dark_theme
 from fluxfile_recovery import clear_recovery, load_recovery, recovery_exists, recovery_path, save_recovery
 
 
@@ -98,6 +99,10 @@ class FluxFileApp(tk.Tk):
         self._batch_thread: threading.Thread | None = None
         self._recovery_after_id: str | None = None
 
+        self._style = ttk.Style(self)
+        self._light_theme = self._style.theme_use()
+        configure_dark_theme(self._style)
+        self._dark_mode = True
         self._configure_style()
         self._build()
         self._bind_shortcuts()
@@ -108,13 +113,25 @@ class FluxFileApp(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _configure_style(self):
-        style = ttk.Style(self)
+        style = self._style
+        style.theme_use("flux-dark" if self._dark_mode else self._light_theme)
+        color_classic_widget(self, self._dark_mode)
         style.configure("Flux.Title.TLabel", font=("TkDefaultFont", 17, "bold"))
         style.configure("Flux.Subtitle.TLabel", font=("TkDefaultFont", 10))
         style.configure("Flux.Primary.TButton", padding=(16, 8))
         style.configure("Flux.Action.TButton", padding=(10, 6))
         style.configure("Treeview", rowheight=26)
         style.configure("Treeview.Heading", font=("TkDefaultFont", 9, "bold"))
+
+    def _toggle_appearance(self):
+        self._dark_mode = not self._dark_mode
+        self._configure_style()
+        self.appearance_btn.configure(text="Light mode" if self._dark_mode else "Dark mode")
+        widgets = list(self.winfo_children())
+        while widgets:
+            widget = widgets.pop()
+            color_classic_widget(widget, self._dark_mode)
+            widgets.extend(widget.winfo_children())
 
     def _build(self):
         self.columnconfigure(0, weight=1)
@@ -129,6 +146,10 @@ class FluxFileApp(tk.Tk):
         self.rescan_btn.grid(row=0, column=2, padx=(8, 0))
         self.guide_btn = ttk.Button(hero, text="Format guide", command=self.show_format_guide, style="Flux.Action.TButton")
         self.guide_btn.grid(row=0, column=3, padx=(8, 0))
+        self.appearance_btn = ttk.Button(
+            hero, text="Light mode", command=self._toggle_appearance, style="Flux.Action.TButton",
+        )
+        self.appearance_btn.grid(row=0, column=4, padx=(8, 0))
 
         plan = ttk.LabelFrame(self, text="Conversion plan", padding=(12, 8))
         plan.grid(row=1, column=0, padx=14, pady=(4, 7), sticky="ew")
@@ -259,6 +280,7 @@ class FluxFileApp(tk.Tk):
         self.run_btn.grid(row=0, column=4, padx=(8, 0))
 
         self.context_menu = tk.Menu(self, tearoff=False)
+        color_classic_widget(self.context_menu, self._dark_mode)
         self.context_menu.add_command(label="Retry selected", command=self.retry_selected)
         self.context_menu.add_command(label="Relink selected source…", command=self.relink_selected_source)
         self.context_menu.add_command(label="Remove selected", command=self.remove_selected)
@@ -336,6 +358,7 @@ class FluxFileApp(tk.Tk):
     def _set_format_menu(self, button, variable, formats, default, on_select):
         old_menu = button.cget("menu")
         menu = tk.Menu(button, tearoff=False)
+        color_classic_widget(menu, self._dark_mode)
         menu.add_radiobutton(
             label=FORMAT_LABELS[default], variable=variable, value=default, command=on_select,
         )
@@ -344,6 +367,7 @@ class FluxFileApp(tk.Tk):
             menu.add_separator()
         for label, choices in groups:
             submenu = tk.Menu(menu, tearoff=False)
+            color_classic_widget(submenu, self._dark_mode)
             for fmt in choices:
                 submenu.add_radiobutton(label=f".{fmt}", variable=variable, value=fmt, command=on_select)
             menu.add_cascade(label=label, menu=submenu)
@@ -926,6 +950,7 @@ class FluxFileApp(tk.Tk):
 
     def show_format_guide(self):
         guide = tk.Toplevel(self)
+        color_classic_widget(guide, self._dark_mode)
         guide.title("FluxFile format guide")
         guide.geometry("720x560")
         guide.minsize(560, 420)
@@ -933,6 +958,7 @@ class FluxFileApp(tk.Tk):
         guide.rowconfigure(1, weight=1)
         ttk.Label(guide, text="Local conversion engines", style="Flux.Title.TLabel", padding=(14, 12, 14, 6)).grid(row=0, column=0, sticky="w")
         text = tk.Text(guide, wrap="word", padx=14, pady=12)
+        color_classic_widget(text, self._dark_mode)
         text.grid(row=1, column=0, sticky="nsew")
         body = (
             "Documents / ebooks\n  Pandoc or LibreOffice\n\n"
