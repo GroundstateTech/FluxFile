@@ -30,7 +30,7 @@ from extended_formats import (
 
 APP_NAME = "FluxFile"
 VERSION = "0.13.0"
-MIN_PYTHON = (3, 10)
+MIN_PYTHON = (3, 11)
 SUBPROCESS_TIMEOUT_SECONDS = 300
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
