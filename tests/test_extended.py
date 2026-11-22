@@ -1,5 +1,6 @@
 import json
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -48,6 +49,49 @@ class ExtendedTests(unittest.TestCase):
             with zipfile.ZipFile(out) as z:
                 self.assertEqual(z.read('folder/a.txt'), b'hello')
                 self.assertIn('empty/', z.namelist())
+
+    def test_archive_refuses_windows_unsafe_paths_and_aliases(self):
+        source = self.root / "unsafe.zip"
+        output = self.root / "safe.tar"
+        output.write_bytes(b"existing output")
+        for names, reason in (
+            (["aux.txt"], "Unsafe archive member path"),
+            (["folder /a.txt"], "Unsafe archive member path"),
+            (["folder/data.txt", "./folder//data.txt"], "duplicate paths"),
+            (["DATA.txt", "data.txt"], "duplicate paths"),
+            (["Folder", "folder/child.txt"], "used as a parent"),
+        ):
+            with self.subTest(names=names):
+                with zipfile.ZipFile(source, "w") as archive:
+                    for name in names:
+                        archive.writestr(name, "example")
+                with self.assertRaisesRegex(ValueError, reason):
+                    self.engine.convert(source, output)
+                self.assertEqual(output.read_bytes(), b"existing output")
+
+    def test_archive_refuses_zip_special_files(self):
+        source = self.root / "special.zip"
+        output = self.root / "safe.tar"
+        with zipfile.ZipFile(source, "w") as archive:
+            entry = zipfile.ZipInfo("pipe")
+            entry.create_system = 3
+            entry.external_attr = (stat.S_IFIFO | 0o644) << 16
+            archive.writestr(entry, b"")
+        with self.assertRaisesRegex(ValueError, "special files"):
+            self.engine.convert(source, output)
+        self.assertFalse(output.exists())
+
+    def test_tar_root_and_dot_prefix_repack_with_portable_names(self):
+        source = self.root / "original.tar"
+        output = self.root / "repacked.zip"
+        with tarfile.open(source, "w") as archive:
+            root = tarfile.TarInfo(".")
+            root.type = tarfile.DIRTYPE
+            archive.addfile(root)
+            archive.addfile(tarfile.TarInfo("./folder//data.txt"))
+        self.engine.convert(source, output)
+        with zipfile.ZipFile(output) as archive:
+            self.assertEqual(archive.namelist(), ["folder/data.txt"])
 
     def test_compound_archive_suffix(self):
         src = self.root / 'files.tar.gz'
