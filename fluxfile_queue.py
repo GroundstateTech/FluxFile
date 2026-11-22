@@ -61,7 +61,7 @@ def requeue_job(job: Job, engine: Engine) -> Job:
     job.engine = engine.engine_for(job.source_format, job.target_format) or "unavailable"
     if job.engine == "unavailable":
         job.status = "Unsupported"
-        job.error = f"No installed engine supports .{job.source_format} → .{job.target_format}"
+        job.error = engine.unavailable_route(job.source_format, job.target_format)
     else:
         job.status = "Queued"
     return job

@@ -7,3 +7,4 @@ converted/
 Thumbs.db
 .coverage
 .pytest_cache/
+/engines/

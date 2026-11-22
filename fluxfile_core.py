@@ -133,6 +133,42 @@ def which_any(*names: str) -> str | None:
     return None
 
 
+def find_external_engines() -> dict[str, str | None]:
+    names = {
+        "ffmpeg": ("ffmpeg",),
+        "pandoc": ("pandoc",),
+        "libreoffice": ("libreoffice", "soffice"),
+    }
+    if sys.platform != "win32":
+        return {engine: which_any(*commands) for engine, commands in names.items()}
+
+    names["libreoffice"] = ("soffice.com", "soffice.exe")
+    paths = {engine: which_any(*commands) for engine, commands in names.items()}
+    program_files = [
+        Path(value) for variable in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)")
+        if (value := os.environ.get(variable))
+    ]
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    local_roots = [Path(local_app_data)] if local_app_data else []
+    for engine, commands in names.items():
+        if paths[engine]:
+            continue
+        local_bin = Path(__file__).resolve().parent / "engines" / engine
+        locations = [local_bin, local_bin / "bin"]
+        if engine == "libreoffice":
+            locations += [local_bin / "program"]
+            locations += [root / "LibreOffice" / "program" for root in program_files]
+        if engine == "pandoc":
+            locations += [root / "Pandoc" for root in [*local_roots, *program_files]]
+        locations += [root / "Microsoft" / "WinGet" / "Links" for root in local_roots]
+        paths[engine] = next(
+            (str(candidate) for folder in locations for command in commands
+             if (candidate := folder / (command if "." in command else f"{command}.exe")).is_file()),
+            None,
+        )
+    return paths
+
+
 def normalize_format(value: str) -> str:
     value = value.strip().lower().lstrip(".")
     aliases = {
@@ -361,9 +397,10 @@ class Engine:
     """Route conversions to local engines and atomically publish completed output."""
 
     def __init__(self):
-        self.ffmpeg = which_any("ffmpeg")
-        self.pandoc = which_any("pandoc")
-        self.libreoffice = which_any("libreoffice", "soffice")
+        engines = find_external_engines()
+        self.ffmpeg = engines["ffmpeg"]
+        self.pandoc = engines["pandoc"]
+        self.libreoffice = engines["libreoffice"]
         try:
             import cairosvg  # noqa: F401
             svg_available = True
@@ -450,6 +487,26 @@ class Engine:
         self._route_cache[key] = engine
         return engine
 
+    def unavailable_route(self, source_fmt: str, target_fmt: str) -> str:
+        source_fmt = normalize_format(source_fmt)
+        target_fmt = normalize_format(target_fmt)
+        src, dst = f".{source_fmt}", f".{target_fmt}"
+        route = f"{src} → {dst}"
+        if not self.ffmpeg and (
+            (source_fmt in AUDIO | VIDEO and target_fmt in AUDIO_TARGETS)
+            or (source_fmt in VIDEO and target_fmt in MEDIA_TARGETS)
+        ):
+            return f"{route} requires FFmpeg. See Windows engine setup in the README."
+        if not self.pandoc and src in PANDOC_INPUT_EXTS and dst in PANDOC_OUTPUT_EXTS:
+            return f"{route} requires Pandoc. See engine setup in the README."
+        if not self.libreoffice and (
+            (src in LIBREOFFICE_DOCUMENT_INPUTS and dst in LIBREOFFICE_DOCUMENT_TARGETS)
+            or (src in LIBREOFFICE_SHEET_INPUTS and dst == ".pdf")
+            or (src in LIBREOFFICE_PRESENTATION_INPUTS and dst in LIBREOFFICE_PRESENTATION_TARGETS)
+        ):
+            return f"{route} requires LibreOffice. See engine setup in the README."
+        return f"No installed engine supports {route}"
+
     def convert(self, source: Path, output: Path, cancel_event: threading.Event | None = None) -> str:
         source = source.expanduser().resolve()
         output = output.expanduser()
@@ -463,7 +520,7 @@ class Engine:
         dst_fmt = normalize_format(output.suffix)
         engine = self.engine_for(src_fmt, dst_fmt)
         if not engine:
-            raise RuntimeError(f"No installed engine supports .{src_fmt} → .{dst_fmt}")
+            raise RuntimeError(self.unavailable_route(src_fmt, dst_fmt))
 
         temp = output.parent / f".{output.stem}.fluxfile-{uuid.uuid4().hex[:10]}{output.suffix.lower()}"
         previous_cancel_event = getattr(self._cancel_state, "event", None)

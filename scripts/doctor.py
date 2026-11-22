@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import platform
-import shutil
 import sys
 from pathlib import Path
 
@@ -38,21 +37,23 @@ def main() -> int:
 
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
+    engines = {}
     print("FluxFile architecture: ", end="")
     try:
-        from fluxfile_core import VERSION
+        from fluxfile_core import VERSION, find_external_engines
         from fluxfile_batch import recommended_workers
         from fluxfile_session import SESSION_VERSION
         from fluxfile_queue import PROBLEM_STATUSES
         from fluxfile_recovery import recovery_path
+        engines = find_external_engines()
         print(f"OK (v{VERSION}, queue schema={SESSION_VERSION}, problem states={len(PROBLEM_STATUSES)}, recovery={recovery_path()}, default workers={recommended_workers()})")
     except Exception as exc:
         print(f"BROKEN ({exc})")
         failures.append(f"FluxFile internal import failed: {exc}")
 
     print("\nOptional external engines:")
-    for binary in ("pandoc", "libreoffice", "soffice", "ffmpeg"):
-        print(f"  {binary}: {shutil.which(binary) or 'not found'}")
+    for binary, location in engines.items():
+        print(f"  {binary}: {location or 'not found'}")
 
     print("\nPython conversion modules:")
     for module in REQUIRED_MODULES:
