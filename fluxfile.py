@@ -9,11 +9,17 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from extended_formats import ARCHIVES, AUDIO, VIDEO
+
 from fluxfile_core import (
     ALL_TARGETS,
     APP_NAME,
+    DOCUMENT_EXTS,
+    IMAGE_EXTS,
     MIN_PYTHON,
+    PRESENTATION_EXTS,
     SOURCE_FORMATS,
+    TABLE_EXTS,
     VERSION,
     Engine,
     Job,
@@ -33,6 +39,33 @@ from fluxfile_batch import BatchEvent, BatchRunner, BatchSummary, recommended_wo
 from fluxfile_session import load_session, relink_job, relink_missing_jobs, save_session
 from fluxfile_queue import filter_jobs, job_matches, requeue_job, requeue_problems, remove_completed
 from fluxfile_recovery import clear_recovery, load_recovery, recovery_exists, recovery_path, save_recovery
+
+
+FORMAT_GROUPS = (
+    ("Documents", DOCUMENT_EXTS | {".pdf"}),
+    ("Spreadsheets & data", TABLE_EXTS),
+    ("Presentations", PRESENTATION_EXTS),
+    ("Images", IMAGE_EXTS | {".svg"}),
+    ("Audio", {"." + fmt for fmt in AUDIO}),
+    ("Video", {"." + fmt for fmt in VIDEO}),
+    ("Subtitles", {".srt", ".vtt"}),
+    ("Archives", {"." + fmt for fmt in ARCHIVES}),
+)
+FORMAT_LABELS = {"any": "Any file type", "auto": "Automatic"}
+
+
+def group_formats(formats: list[str]) -> list[tuple[str, list[str]]]:
+    remaining = dict.fromkeys(formats)
+    groups = []
+    for label, extensions in FORMAT_GROUPS:
+        choices = [fmt for fmt in remaining if f".{fmt}" in extensions]
+        if choices:
+            groups.append((label, choices))
+            for fmt in choices:
+                del remaining[fmt]
+    if remaining:
+        groups.append(("Other formats", list(remaining)))
+    return groups
 
 
 class FluxFileApp(tk.Tk):
@@ -101,13 +134,12 @@ class FluxFileApp(tk.Tk):
         plan.grid(row=1, column=0, padx=14, pady=(4, 7), sticky="ew")
         plan.columnconfigure(7, weight=1)
         ttk.Label(plan, text="From").grid(row=0, column=0, padx=(0, 5))
-        self.source_box = ttk.Combobox(plan, textvariable=self.source_choice, values=SOURCE_FORMATS, state="readonly", width=12)
+        self.source_box = ttk.Menubutton(plan, width=13, takefocus=True)
         self.source_box.grid(row=0, column=1, padx=(0, 14))
-        self.source_box.bind("<<ComboboxSelected>>", lambda _e: self._update_target_choices())
+        self._set_format_menu(self.source_box, self.source_choice, SOURCE_FORMATS, "any", self._update_target_choices)
         ttk.Label(plan, text="To").grid(row=0, column=2, padx=(0, 5))
-        self.target_box = ttk.Combobox(plan, textvariable=self.target_choice, values=ALL_TARGETS, state="readonly", width=12)
+        self.target_box = ttk.Menubutton(plan, width=13, takefocus=True)
         self.target_box.grid(row=0, column=3, padx=(0, 14))
-        self.target_box.bind("<<ComboboxSelected>>", lambda _e: self._update_plan_status())
         self.apply_btn = ttk.Button(plan, text="Apply to queue", command=self.apply_plan_to_queue, style="Flux.Action.TButton")
         self.apply_btn.grid(row=0, column=4, padx=(0, 12))
         ttk.Separator(plan, orient="vertical").grid(row=0, column=5, sticky="ns", padx=6)
@@ -301,16 +333,36 @@ class FluxFileApp(tk.Tk):
         extra = f" · {missing} missing" if missing else ""
         return f"{len(self.jobs)} items · {done} done · {failed} failed/unsupported{extra}"
 
+    def _set_format_menu(self, button, variable, formats, default, on_select):
+        old_menu = button.cget("menu")
+        menu = tk.Menu(button, tearoff=False)
+        menu.add_radiobutton(
+            label=FORMAT_LABELS[default], variable=variable, value=default, command=on_select,
+        )
+        groups = group_formats([fmt for fmt in formats if fmt != default])
+        if groups:
+            menu.add_separator()
+        for label, choices in groups:
+            submenu = tk.Menu(menu, tearoff=False)
+            for fmt in choices:
+                submenu.add_radiobutton(label=f".{fmt}", variable=variable, value=fmt, command=on_select)
+            menu.add_cascade(label=label, menu=submenu)
+        button.configure(menu=menu)
+        if old_menu:
+            self.nametowidget(str(old_menu)).destroy()
+
     def _update_target_choices(self):
         values = compatible_targets(self.source_choice.get())
-        self.target_box.configure(values=values)
         if self.target_choice.get() not in values:
             self.target_choice.set("auto")
+        self._set_format_menu(self.target_box, self.target_choice, values, "auto", self._update_plan_status)
         self._update_plan_status()
 
     def _update_plan_status(self):
         src = normalize_format(self.source_choice.get())
         target = normalize_format(self.target_choice.get())
+        self.source_box.configure(text=FORMAT_LABELS.get(src, f".{src}"))
+        self.target_box.configure(text=FORMAT_LABELS.get(target, f".{target}"))
         if src == "any":
             self.plan_text.set("Mixed input · per-file target" if target == "auto" else f"Mixed input → .{target}")
             return
@@ -525,6 +577,8 @@ class FluxFileApp(tk.Tk):
             return
         restore = messagebox.askyesno(
             APP_NAME,
+    DOCUMENT_EXTS,
+    IMAGE_EXTS,
             f"FluxFile found an automatic recovery snapshot with {len(jobs)} queued item(s). Restore it?",
         )
         if restore:
