@@ -135,7 +135,7 @@ FluxFile supports useful conversions within compatible families; it does not pre
 - PDF TXT/HTML export does not OCR scanned pages.
 - Media conversion uses the first video stream excluding cover art, and the first audio stream. Extra tracks and embedded subtitles are omitted. Video-to-audio extraction remains available.
 - Before transcoding, FluxFile checks for required encoders and uses FFprobe, when available, to check for audio or video streams. FFmpeg and FFprobe media inputs use a file-only protocol allowlist. On Windows, engine lookup skips relative PATH entries and batch wrappers. The conversion engines run with the permissions of the current user.
-- Archive repacking rejects links, special files, duplicate/unsafe paths, more than 10,000 entries, and expanded content above 512 MiB.
+- Archive repacking normalizes dot components and redundant separators. It rejects links, special files, Windows device names, case-insensitive duplicate paths, file/directory conflicts, more than 10,000 entries, and expanded content above 512 MiB.
 - SVG rendering rejects external resources and stylesheet imports.
 - Encrypted files, DRM, proprietary CAD, raw-camera workflows, and OCR remain outside the current scope.
 

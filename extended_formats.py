@@ -1,5 +1,7 @@
 """Additional local conversion engines shared by the desktop planner."""
-from pathlib import Path
+from bisect import bisect_left
+from pathlib import Path, PureWindowsPath
+import ntpath
 import re
 
 AUDIO = {'mp3', 'wav', 'flac', 'ogg', 'opus', 'm4a', 'aac', 'aiff', 'wma', 'au', 'caf', 'mka'}
@@ -87,6 +89,24 @@ def convert_subtitles(source: Path, output: Path):
         output.write_text('\n\n'.join(cues) + '\n', encoding='utf-8')
 
 ARCHIVES = {'zip', 'tar', 'tgz', 'tbz2', 'txz'}
+is_windows_reserved = getattr(ntpath, 'isreserved', lambda name: PureWindowsPath(name).is_reserved())
+
+def archive_member_path(name: str) -> str:
+    path = name.replace('\\', '/')
+    if path.startswith('/'):
+        raise ValueError('Unsafe archive member path')
+    # Dot components and redundant separators are common in TAR input.
+    parts = [part for part in path.split('/') if part not in {'', '.'}]
+    for part in parts:
+        if (
+            part == '..'
+            or part.endswith((' ', '.'))
+            or any(ord(char) < 32 or char in '<>:"|?*' for char in part)
+            or is_windows_reserved(part)
+        ):
+            raise ValueError('Unsafe archive member path')
+    return '/'.join(parts)
+
 
 def repack_archive(source: Path, output: Path):
     """Repack regular files without extracting paths, links, or devices to disk."""
@@ -95,42 +115,57 @@ def repack_archive(source: Path, output: Path):
     import zipfile
     limit = 512 * 1024 * 1024
     total = 0
-    names = set()
+    names: dict[str, bool] = {}
     with contextlib.ExitStack() as stack:
         if source.suffix.lower() == '.zip':
-            reader = stack.enter_context(zipfile.ZipFile(source))
-            items = reader.infolist()
             import stat
-            if any(stat.S_ISLNK(m.external_attr >> 16) for m in items):
-                raise ValueError("Archive contains links; repacking refused")
-            members = [(m.filename, m.file_size, m.is_dir(), m) for m in items]
+            reader = stack.enter_context(zipfile.ZipFile(source))
+            entries = (
+                (m.orig_filename, m.file_size, m.is_dir(), m, stat.S_IFMT(m.external_attr >> 16))
+                for m in reader.infolist()
+            )
             opener = reader.open
+            allowed_types = {0, stat.S_IFREG, stat.S_IFDIR}
         else:
             reader = stack.enter_context(tarfile.open(source))
-            items = reader.getmembers()
-            if any(not (m.isfile() or m.isdir()) for m in items):
-                raise ValueError('Archive contains links or special files; repacking refused')
-            members = [(m.name, m.size, m.isdir(), m) for m in items]
+            entries = ((m.name, m.size, m.isdir(), m, int(m.isfile() or m.isdir())) for m in reader)
             opener = reader.extractfile
-        if len(members) > 10000:
-            raise ValueError('Archive exceeds 10,000 entries')
-        for name, size, directory, member in members:
-            path = name.replace('\\', '/')
-            if path.startswith('/') or ':' in path or '..' in path.split('/'):
+            allowed_types = {1}
+
+        members = []
+        for count, (name, size, directory, member, kind) in enumerate(entries, 1):
+            if count > 10000:
+                raise ValueError('Archive exceeds 10,000 entries')
+            if kind not in allowed_types:
+                raise ValueError('Archive contains links or special files; repacking refused')
+            path = archive_member_path(name)
+            if not path and directory:
+                continue
+            if not path:
                 raise ValueError('Unsafe archive member path')
-            if path in names:
+            key = path.casefold()
+            if key in names:
                 raise ValueError('Archive contains duplicate paths')
-            names.add(path)
+            names[key] = directory
             total += size
-        if total > limit:
-            raise ValueError('Archive exceeds 512 MiB expanded size')
+            if total > limit:
+                raise ValueError('Archive exceeds 512 MiB expanded size')
+            members.append((path, size, directory, member))
+
+        ordered_names = sorted(names)
+        for key, directory in names.items():
+            if not directory:
+                prefix = key + '/'
+                index = bisect_left(ordered_names, prefix)
+                if index < len(ordered_names) and ordered_names[index].startswith(prefix):
+                    raise ValueError('Archive contains a file used as a parent directory')
+
         if output.suffix == '.zip':
             writer = stack.enter_context(zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED))
         else:
             mode = {'.tar': 'w', '.tgz': 'w:gz', '.tbz2': 'w:bz2', '.txz': 'w:xz'}[output.suffix]
             writer = stack.enter_context(tarfile.open(output, mode))
         for name, size, directory, member in members:
-            name = name.replace('\\', '/')
             if directory:
                 if isinstance(writer, zipfile.ZipFile):
                     writer.writestr(name.rstrip('/') + '/', b'')
