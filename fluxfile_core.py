@@ -34,7 +34,8 @@ MIN_PYTHON = (3, 11)
 SUBPROCESS_TIMEOUT_SECONDS = 300
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
-TABLE_EXTS = {".csv", ".tsv", ".json", ".xls", ".xlsx", ".ods"}
+DELIMITED_TABLES = {".csv": ",", ".tsv": "\t", ".psv": "|"}
+TABLE_EXTS = {".json", ".jsonl", ".ndjson", ".xls", ".xlsx", ".xlsm", ".ods"} | DELIMITED_TABLES.keys()
 DOCUMENT_EXTS = {".doc", ".docx", ".odt", ".rtf", ".md", ".markdown", ".html", ".htm", ".txt", ".epub"}
 PRESENTATION_EXTS = {".ppt", ".pptx", ".odp"}
 
@@ -50,7 +51,7 @@ LIBREOFFICE_PRESENTATION_TARGETS = {".pdf", ".pptx", ".odp"}
 
 SOURCE_FORMATS = [
     "any", "pdf", "doc", "docx", "odt", "rtf", "html", "md", "txt", "epub",
-    "csv", "tsv", "json", "xls", "xlsx", "ods",
+    "csv", "tsv", "psv", "json", "xls", "xlsx", "xlsm", "ods",
     "png", "jpg", "jpeg", "bmp", "gif", "tif", "tiff", "webp",
     "ppt", "pptx", "odp",
 ]
@@ -61,17 +62,15 @@ ALL_TARGETS = [
     "pptx", "odp",
 ]
 
-TABLE_TARGETS = ["xlsx", "ods", "csv", "tsv", "json"]
+TABLE_TARGETS = ["xlsx", "ods", "csv", "tsv", "psv", "json", "jsonl", "ndjson"]
 IMAGE_TARGETS = ["png", "jpg", "jpeg", "bmp", "gif", "tiff", "webp", "pdf"]
 DOCUMENT_TARGETS = ["pdf", "docx", "odt", "rtf", "html", "md", "txt", "epub"]
 PRESENTATION_TARGETS = ["pdf", "pptx", "odp"]
 
 IMAGE_EXTS |= {"." + fmt for fmt in EXTRA_IMAGES}
 IMAGE_TARGETS += IMAGE_OUTPUTS
-TABLE_EXTS.add(".jsonl")
-TABLE_TARGETS.append("jsonl")
-SOURCE_FORMATS += sorted(AUDIO | VIDEO | EXTRA_IMAGES | {"svg", "srt", "vtt", "jsonl"} | ARCHIVES)
-ALL_TARGETS += list(dict.fromkeys(AUDIO_TARGETS + MEDIA_TARGETS + IMAGE_OUTPUTS + ["srt", "vtt", "jsonl"] + sorted(ARCHIVES)))
+SOURCE_FORMATS += sorted(AUDIO | VIDEO | EXTRA_IMAGES | {"svg", "srt", "vtt", "jsonl", "ndjson"} | ARCHIVES)
+ALL_TARGETS += TABLE_TARGETS + AUDIO_TARGETS + MEDIA_TARGETS + IMAGE_OUTPUTS + ["srt", "vtt"] + sorted(ARCHIVES)
 SOURCE_FORMATS = list(dict.fromkeys(SOURCE_FORMATS))
 ALL_TARGETS = list(dict.fromkeys(ALL_TARGETS))
 
@@ -185,7 +184,7 @@ def choose_auto_target(source: Path) -> str:
         return "png"
     if fmt in {"srt", "vtt"}:
         return "vtt" if fmt == "srt" else "srt"
-    if fmt == "jsonl":
+    if fmt in {"jsonl", "ndjson", "psv", "xlsm"}:
         return "xlsx"
     if fmt in ARCHIVES:
         return "tgz" if fmt == "zip" else "zip"
@@ -212,7 +211,7 @@ def compatible_targets(fmt: str) -> list[str]:
         return ALL_TARGETS[:]
     if fmt in ARCHIVES:
         return ["auto", *sorted(ARCHIVES)]
-    if fmt == "jsonl":
+    if fmt in {"jsonl", "ndjson", "psv", "xlsm"}:
         return ["auto", *TABLE_TARGETS]
     if fmt in AUDIO:
         return ["auto", *AUDIO_TARGETS]
@@ -382,16 +381,18 @@ class Engine:
         }
         self._table_backends = {
             ext: importlib.util.find_spec(module) is not None
-            for ext, module in {".xls": "xlrd", ".xlsx": "openpyxl", ".ods": "odf"}.items()
+            for ext, module in {".xls": "xlrd", ".xlsx": "openpyxl", ".xlsm": "openpyxl", ".ods": "odf"}.items()
         }
         self._route_cache: dict[tuple[str, str], str | None] = {}
         self._cancel_state = threading.local()
         self._image_save_exts: set[str] = set()
         if self._capabilities["pillow"]:
-            from PIL import Image
+            from PIL import Image, features
             Image.init()
             registered = Image.registered_extensions()
             self._image_save_exts = {ext for ext, fmt in registered.items() if fmt in Image.SAVE}
+            if not features.check_codec("jpg_2000"):
+                self._image_save_exts.discard(".jp2")
 
     def capabilities(self) -> dict[str, bool]:
         return dict(self._capabilities)
@@ -419,7 +420,11 @@ class Engine:
             engine = "subtitles"
         elif src == ".pdf" and dst in {".html", ".png", ".jpg", ".tiff"}:
             engine = "pdf-export" if self._capabilities["pymupdf"] else None
-        elif src in IMAGE_EXTS and dst in self._image_save_exts:
+        elif (
+            src in IMAGE_EXTS
+            and dst in self._image_save_exts
+            and (src != ".jp2" or src in self._image_save_exts)
+        ):
             engine = "pillow" if self._capabilities["pillow"] else None
         elif src in TABLE_EXTS and target_fmt in TABLE_TARGETS:
             if (
@@ -566,18 +571,20 @@ class Engine:
                 background = Image.new("RGB", rgba.size, "white")
                 background.paste(rgba, mask=rgba.getchannel("A"))
                 im = background
+            elif target == ".qoi" and im.mode not in {"RGB", "RGBA"}:
+                im = im.convert("RGBA" if "A" in im.getbands() or "transparency" in im.info else "RGB")
+            elif target == ".jp2" and im.mode == "P":
+                im = im.convert("RGBA" if "transparency" in im.info else "RGB")
             im.save(output)
 
     def _table(self, source: Path, output: Path) -> None:
         import pandas as pd
         src, dst = source.suffix.lower(), output.suffix.lower()
         sheets: dict[str, object]
-        if src == ".jsonl":
+        if src in {".jsonl", ".ndjson"}:
             sheets = {"Sheet1": pd.read_json(source, lines=True)}
-        elif src == ".csv":
-            sheets = {"Sheet1": pd.read_csv(source)}
-        elif src == ".tsv":
-            sheets = {"Sheet1": pd.read_csv(source, sep="\t")}
+        elif src in DELIMITED_TABLES:
+            sheets = {"Sheet1": pd.read_csv(source, sep=DELIMITED_TABLES[src])}
         elif src == ".json":
             data = json.loads(source.read_text(encoding="utf-8-sig"))
             if isinstance(data, dict) and "rows" in data:
@@ -587,7 +594,7 @@ class Engine:
             if not isinstance(data, (list, dict)):
                 raise RuntimeError("JSON table source must contain an object, array, or {'rows': [...]} structure")
             sheets = {"Sheet1": pd.DataFrame(data)}
-        elif src in {".xlsx", ".xls"}:
+        elif src in {".xlsx", ".xlsm", ".xls"}:
             sheets = pd.read_excel(source, sheet_name=None)
         elif src == ".ods":
             sheets = pd.read_excel(source, sheet_name=None, engine="odf")
@@ -605,11 +612,11 @@ class Engine:
                 name = name[:31] or "Sheet"
                 base = name
                 suffix = 2
-                while name in used_names:
+                while name.casefold() in used_names:
                     marker = f"_{suffix}"
                     name = f"{base[:31-len(marker)]}{marker}"
                     suffix += 1
-                used_names.add(name)
+                used_names.add(name.casefold())
                 return name
             with pd.ExcelWriter(output, engine=writer_engine) as writer:
                 for name, df in sheets.items():
@@ -621,11 +628,9 @@ class Engine:
                 "Choose .xlsx or .ods to preserve all sheets."
             )
         df = next(iter(sheets.values()))
-        if dst == ".csv":
-            df.to_csv(output, index=False)
-        elif dst == ".tsv":
-            df.to_csv(output, sep="\t", index=False)
-        elif dst == ".jsonl":
+        if dst in DELIMITED_TABLES:
+            df.to_csv(output, sep=DELIMITED_TABLES[dst], index=False)
+        elif dst in {".jsonl", ".ndjson"}:
             output.write_text(df.to_json(orient="records", lines=True), encoding="utf-8")
         elif dst == ".json":
             output.write_text(df.to_json(orient="records", indent=2), encoding="utf-8")

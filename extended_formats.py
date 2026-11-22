@@ -2,12 +2,12 @@
 from pathlib import Path
 import re
 
-AUDIO = {'mp3', 'wav', 'flac', 'ogg', 'opus', 'm4a', 'aac', 'aiff', 'wma'}
-VIDEO = {'mp4', 'mkv', 'mov', 'avi', 'webm', 'mpeg', 'mpg', 'm4v', 'wmv', 'flv', 'ts'}
+AUDIO = {'mp3', 'wav', 'flac', 'ogg', 'opus', 'm4a', 'aac', 'aiff', 'wma', 'au', 'caf', 'mka'}
+VIDEO = {'mp4', 'mkv', 'mov', 'avi', 'webm', 'mpeg', 'mpg', 'm4v', 'wmv', 'flv', 'ts', 'm2ts', 'mts', '3gp', 'ogv'}
 MEDIA_TARGETS = ['mp4', 'mkv', 'mov', 'avi', 'webm', 'gif']
-AUDIO_TARGETS = ['mp3', 'wav', 'flac', 'ogg', 'opus', 'm4a', 'aac', 'aiff']
-EXTRA_IMAGES = {'ico', 'icns', 'ppm', 'pgm', 'pbm', 'tga', 'avif', 'dds'}
-IMAGE_OUTPUTS = ['ico', 'icns', 'ppm', 'tga', 'avif']
+AUDIO_TARGETS = ['mp3', 'wav', 'flac', 'ogg', 'opus', 'm4a', 'aac', 'aiff', 'au', 'caf', 'mka']
+EXTRA_IMAGES = {'ico', 'icns', 'ppm', 'pgm', 'pbm', 'tga', 'avif', 'dds', 'qoi', 'jp2'}
+IMAGE_OUTPUTS = ['ico', 'icns', 'ppm', 'tga', 'avif', 'qoi', 'jp2']
 
 
 def media_command(ffmpeg, source, output):
@@ -16,7 +16,8 @@ def media_command(ffmpeg, source, output):
     if target in AUDIO_TARGETS:
         command += ['-map', '0:a:0', '-vn']
         codecs = {'mp3': 'libmp3lame', 'wav': 'pcm_s16le', 'flac': 'flac',
-                  'ogg': 'libvorbis', 'opus': 'libopus', 'm4a': 'aac', 'aac': 'aac', 'aiff': 'pcm_s16be'}
+                  'ogg': 'libvorbis', 'opus': 'libopus', 'm4a': 'aac', 'aac': 'aac', 'aiff': 'pcm_s16be',
+                  'au': 'pcm_s16be', 'caf': 'pcm_s16be', 'mka': 'flac'}
         command += ['-c:a', codecs[target]]
     elif target == 'gif':
         command += ['-map', '0:v:0', '-vf', 'fps=12,scale=640:-1:flags=lanczos', '-an']
