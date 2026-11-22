@@ -936,7 +936,7 @@ class FluxFileApp(tk.Tk):
         text.grid(row=1, column=0, sticky="nsew")
         body = (
             "Documents / ebooks\n  Pandoc or LibreOffice\n\n"
-            "Tables / JSONL\n  pandas + spreadsheet readers/writers\n\n"
+            "Tables / JSONL / NDJSON\n  pandas + spreadsheet readers/writers\n\n"
             "Images / icons\n  Pillow; codec support depends on the installed Pillow build\n\n"
             "PDF text, HTML and page images\n  PyMuPDF\n\n"
             "Audio / video / audio extraction\n  FFmpeg\n\n"
@@ -945,7 +945,7 @@ class FluxFileApp(tk.Tk):
             "Integrity rules\n"
             "• Multi-page PDFs require TIFF to preserve every page when rendering images.\n"
             "• Animated images require a multi-frame output target.\n"
-            "• Multi-sheet workbooks cannot be flattened to CSV/TSV/JSON without explicit data loss, so FluxFile refuses that route.\n"
+            "• Flat table outputs require a single sheet. XLSM exports extract sheet data and omit macros and workbook formatting.\n"
             "• Media conversion uses the first video/audio stream.\n"
             "• Archive repacking rejects links, unsafe paths, duplicates, and oversized expanded content.\n"
             "• Existing output files are published atomically after a successful conversion.\n"

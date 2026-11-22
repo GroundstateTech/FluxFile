@@ -112,12 +112,12 @@ A synthetic 16-job scheduler benchmark during development measured about **4× t
 
 | Family | Routes | Engine |
 | --- | --- | --- |
-| Audio | MP3, WAV, FLAC, OGG, OPUS, M4A, AAC, AIFF | FFmpeg |
-| Video | MP4, MKV, MOV, AVI, WebM, animated GIF; audio extraction | FFmpeg |
-| Images | PNG/JPG/BMP/GIF/TIFF/WebP plus ICO, ICNS, PPM, TGA, AVIF where supported | Pillow |
+| Audio | MP3, WAV, FLAC, OGG, OPUS, M4A, AAC, AIFF, AU, CAF, MKA | FFmpeg |
+| Video | MP4, MKV, MOV, AVI, WebM, animated GIF; audio extraction. Also reads M2TS, MTS, 3GP and OGV | FFmpeg |
+| Images | PNG/JPG/BMP/GIF/TIFF/WebP plus ICO, ICNS, PPM, TGA, AVIF, QOI and JPEG 2000 (JP2) where supported | Pillow |
 | Vector | SVG → PNG / PDF | optional CairoSVG + Cairo |
 | PDF | DOCX, TXT, HTML; single-page PNG/JPG; all pages as TIFF | pdf2docx / PyMuPDF |
-| Data | CSV, TSV, JSON, JSONL, XLS/XLSX, ODS | pandas / spreadsheet engines |
+| Data | CSV, TSV, PSV (pipe-separated), JSON, JSONL/NDJSON, XLS/XLSX, ODS; XLSM input | pandas / spreadsheet engines |
 | Documents | Markdown, HTML, DOCX, ODT, RTF, EPUB, TXT | Pandoc / LibreOffice |
 | Presentations | PPT/PPTX/ODP → supported office targets / PDF | LibreOffice |
 | Subtitles | SRT ↔ VTT | built in |
@@ -130,8 +130,8 @@ FluxFile supports useful conversions within compatible families; it does not pre
 - Failed conversions do not replace an existing destination; output is staged and atomically published after success.
 - Animated images preserve frames only in multi-frame-capable targets; destructive flattening is refused.
 - Multi-page PDF → PNG/JPG is refused; use TIFF to preserve all pages.
-- Multi-sheet workbooks preserve sheets when targeting XLSX/ODS; flattening to CSV/TSV/JSON is refused rather than silently discarding sheets.
-- Table conversion preserves cell values and sheet names, not formulas, macros, workbook formatting, or embedded objects.
+- Multi-sheet workbooks preserve sheets when targeting XLSX/ODS; flat outputs such as CSV, PSV and NDJSON require a single sheet.
+- Table conversion extracts cell values and sheet names. XLSM exports omit macros, formulas, workbook formatting, and embedded objects.
 - PDF TXT/HTML export does not OCR scanned pages.
 - Media conversion uses the first video/audio stream; extra tracks and embedded subtitles are omitted.
 - Archive repacking rejects links, special files, duplicate/unsafe paths, more than 10,000 entries, and expanded content above 512 MiB.

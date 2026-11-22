@@ -113,8 +113,26 @@ class ExtendedTests(unittest.TestCase):
             out = self.root/('audio.'+fmt)
             self.engine.convert(src,out)
             self.assertGreater(out.stat().st_size,0)
+        for fmt in ("au", "caf", "mka"):
+            with self.subTest(audio_format=fmt):
+                encoded = self.root / f"tone.{fmt}"
+                decoded = self.root / f"decoded-{fmt}.wav"
+                self.assertEqual(self.engine.convert(src, encoded), "ffmpeg")
+                self.assertEqual(self.engine.convert(encoded, decoded), "ffmpeg")
+                with wave.open(str(decoded), "rb") as audio:
+                    self.assertEqual(audio.getnframes(), 44100)
+                    self.assertEqual(audio.readframes(44100), b"\0\0" * 44100)
+
         video = self.root/'source.mp4'
         subprocess.run(['ffmpeg','-loglevel','error','-f','lavfi','-i','color=c=blue:s=32x32:d=1','-i',str(src),'-shortest','-c:v','libx264','-pix_fmt','yuv420p',str(video)],check=True)
+        transport_stream = self.root / "camera.m2ts"
+        subprocess.run(
+            ["ffmpeg", "-loglevel", "error", "-i", str(video), "-c", "copy",
+             "-f", "mpegts", str(transport_stream)],
+            check=True,
+        )
+        self.assertEqual(self.engine.convert(transport_stream, self.root / "camera.mp4"), "ffmpeg")
+
         for fmt in ['mkv','mov','avi','webm','gif','mp3']:
             out = self.root/('video.'+fmt)
             self.engine.convert(video,out)

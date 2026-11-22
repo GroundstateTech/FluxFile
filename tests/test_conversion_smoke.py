@@ -90,6 +90,57 @@ class ConversionSmokeTests(unittest.TestCase):
                 self.assertEqual(im.mode, "RGB")
                 self.assertEqual(im.size, (16, 16))
 
+    def test_pipe_separated_to_ndjson_and_back(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "parts.psv"
+            interim = root / "parts.ndjson"
+            output = root / "roundtrip.psv"
+            source.write_text('name|count\n"plug|socket"|2\n', encoding="utf-8")
+            self.assertEqual(self.engine.convert(source, interim), "pandas")
+            self.assertEqual(json.loads(interim.read_text()), {"name": "plug|socket", "count": 2})
+            self.assertEqual(self.engine.convert(interim, output), "pandas")
+            self.assertEqual(output.read_text(), source.read_text())
+
+    def test_xlsm_to_xlsx_preserves_sheet_data(self):
+        import pandas as pd
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "sample.xlsm"
+            output = root / "sample.xlsx"
+            with pd.ExcelWriter(source, engine="openpyxl") as writer:
+                pd.DataFrame({"value": [1]}).to_excel(writer, index=False, sheet_name="Inputs")
+                pd.DataFrame({"value": [2]}).to_excel(writer, index=False, sheet_name="Results")
+            self.assertEqual(self.engine.convert(source, output), "pandas")
+            sheets = pd.read_excel(output, sheet_name=None)
+            self.assertEqual({name: frame["value"].tolist() for name, frame in sheets.items()},
+                             {"Inputs": [1], "Results": [2]})
+
+    def test_qoi_and_jpeg2000_preserve_pixels(self):
+        from PIL import Image, features
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "sample.png"
+            Image.new("LA", (8, 8), (77, 150)).save(source)
+            qoi = root / "sample.qoi"
+            out = root / "from-qoi.png"
+            self.assertEqual(self.engine.convert(source, qoi), "pillow")
+            self.assertEqual(self.engine.convert(qoi, out), "pillow")
+            with Image.open(out) as image:
+                self.assertEqual(image.getpixel((0, 0)), (77, 77, 77, 150))
+
+            if features.check_codec("jpg_2000"):
+                jp2 = root / "sample.jp2"
+                self.assertEqual(self.engine.convert(out, jp2), "pillow")
+                self.assertEqual(self.engine.convert(jp2, out), "pillow")
+                with Image.open(out) as image:
+                    self.assertEqual(image.getpixel((0, 0)), (77, 77, 77, 150))
+            else:
+                self.assertIsNone(self.engine.engine_for("png", "jp2"))
+                self.assertIsNone(self.engine.engine_for("jp2", "png"))
+
     def test_pdf_to_text(self):
         if not self.engine.capabilities()["pymupdf"]:
             self.skipTest("PyMuPDF not installed")
