@@ -1,6 +1,8 @@
+import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fluxfile import (
     Engine,
@@ -49,6 +51,25 @@ class CoreTests(unittest.TestCase):
         self.assertIn("pdf", targets)
         self.assertNotIn("pptx", targets)
         self.assertNotIn("pdf", compatible_targets("json"))
+
+    def test_spreadsheet_routes_require_the_corresponding_readers_and_writers(self):
+        find_spec = importlib.util.find_spec
+        with patch(
+            "fluxfile_core.importlib.util.find_spec",
+            side_effect=lambda name: None if name in {"odf", "xlrd", "openpyxl"} else find_spec(name),
+        ):
+            engine = Engine()
+        engine.libreoffice = "soffice"
+
+        for source, target in (
+            ("ods", "csv"), ("csv", "ods"), ("xls", "csv"),
+            ("xlsx", "csv"), ("csv", "xlsx"),
+        ):
+            with self.subTest(source=source, target=target):
+                self.assertIsNone(engine.engine_for(source, target))
+        self.assertEqual(engine.engine_for("ods", "ods"), "copy")
+        if engine.capabilities()["pandas"]:
+            self.assertEqual(engine.engine_for("csv", "tsv"), "pandas")
 
     def test_document_matrix_does_not_offer_spreadsheet_or_presentation_outputs(self):
         targets = compatible_targets("docx")
