@@ -166,10 +166,11 @@ def find_external_engines() -> dict[str, str | None]:
     ]
     local_app_data = os.environ.get("LOCALAPPDATA")
     local_roots = [Path(local_app_data)] if local_app_data else []
+    app_dir = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
     for engine, commands in names.items():
         if paths[engine]:
             continue
-        local_bin = Path(__file__).resolve().parent / "engines" / engine
+        local_bin = app_dir / "engines" / engine
         locations = [local_bin, local_bin / "bin"]
         if engine == "libreoffice":
             locations += [local_bin / "program"]
@@ -638,6 +639,7 @@ class Engine:
         started = time.monotonic()
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8", errors="replace",
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
         while True:
             try:

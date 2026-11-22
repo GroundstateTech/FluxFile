@@ -33,3 +33,16 @@ Core `requirements.txt` requires `Pillow>=13.0.0,<14`, whose declared interprete
 - Record known limitations and checksums for any distributed package.
 
 These gates do not require a public server or paid artifact storage. A CI pass is validation evidence, not a published or retained release binary.
+
+## Desktop packaging draft
+
+The PyInstaller spec in `packaging/FluxFile.spec` prepares a one-folder desktop build. Its build dependencies live in `packaging/requirements-build.txt`. The runtime uses `requirements.txt`; FFmpeg, LibreOffice, Pandoc, and the optional Cairo SVG stack are installed separately. Portable engine binaries can go under `engines/` beside the packaged executable.
+
+Wait for the source desktop app to pass on the Windows workstation and on muchateta before making a package. Build separately on each target OS. On the Windows workstation, the future build commands from the FluxFile checkout are:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r packaging\requirements-build.txt
+.\.venv\Scripts\python.exe -m PyInstaller --clean packaging\FluxFile.spec
+```
+
+Test the entire `dist/FluxFile` folder on a clean Windows account before distribution. Include both appearance modes, queue recovery, PNG → QOI, XLSM → XLSX, and MP4 → MP3 with an installed FFmpeg. Confirm that external tools launch without opening console windows and that startup errors remain diagnosable. Generate the checksum from the final archive after those checks.
