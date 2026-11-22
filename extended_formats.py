@@ -5,26 +5,42 @@ import re
 AUDIO = {'mp3', 'wav', 'flac', 'ogg', 'opus', 'm4a', 'aac', 'aiff', 'wma', 'au', 'caf', 'mka'}
 VIDEO = {'mp4', 'mkv', 'mov', 'avi', 'webm', 'mpeg', 'mpg', 'm4v', 'wmv', 'flv', 'ts', 'm2ts', 'mts', '3gp', 'ogv'}
 MEDIA_TARGETS = ['mp4', 'mkv', 'mov', 'avi', 'webm', 'gif']
-AUDIO_TARGETS = ['mp3', 'wav', 'flac', 'ogg', 'opus', 'm4a', 'aac', 'aiff', 'au', 'caf', 'mka']
+AUDIO_CODECS = {
+    'mp3': 'libmp3lame', 'wav': 'pcm_s16le', 'flac': 'flac',
+    'ogg': 'libvorbis', 'opus': 'libopus', 'm4a': 'aac', 'aac': 'aac',
+    'aiff': 'pcm_s16be', 'au': 'pcm_s16be', 'caf': 'pcm_s16be', 'mka': 'flac',
+}
+AUDIO_TARGETS = list(AUDIO_CODECS)
+MEDIA_INPUT_OPTIONS = ('-protocol_whitelist', 'file')
 EXTRA_IMAGES = {'ico', 'icns', 'ppm', 'pgm', 'pbm', 'tga', 'avif', 'dds', 'qoi', 'jp2'}
 IMAGE_OUTPUTS = ['ico', 'icns', 'ppm', 'tga', 'avif', 'qoi', 'jp2']
 
 
+def media_codecs(target: str) -> tuple[str | None, str | None]:
+    if target in AUDIO_CODECS:
+        return None, AUDIO_CODECS[target]
+    if target == 'gif':
+        return 'gif', None
+    if target == 'webm':
+        return 'libvpx-vp9', 'libopus'
+    return 'libx264', 'aac'
+
+
 def media_command(ffmpeg, source, output):
     target = output.suffix.lower().lstrip('.')
-    command = [ffmpeg, '-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-i', str(source)]
-    if target in AUDIO_TARGETS:
-        command += ['-map', '0:a:0', '-vn']
-        codecs = {'mp3': 'libmp3lame', 'wav': 'pcm_s16le', 'flac': 'flac',
-                  'ogg': 'libvorbis', 'opus': 'libopus', 'm4a': 'aac', 'aac': 'aac', 'aiff': 'pcm_s16be',
-                  'au': 'pcm_s16be', 'caf': 'pcm_s16be', 'mka': 'flac'}
-        command += ['-c:a', codecs[target]]
-    elif target == 'gif':
-        command += ['-map', '0:v:0', '-vf', 'fps=12,scale=640:-1:flags=lanczos', '-an']
+    video_codec, audio_codec = media_codecs(target)
+    command = [
+        ffmpeg, '-nostdin', '-hide_banner', '-loglevel', 'error',
+        '-y', *MEDIA_INPUT_OPTIONS, '-i', str(source),
+    ]
+    if video_codec is None:
+        command += ['-map', '0:a:0', '-vn', '-c:a', audio_codec]
+    elif audio_codec is None:
+        command += ['-map', '0:V:0', '-vf', "fps=12,scale='min(640,iw)':-1:flags=lanczos", '-an', '-c:v', video_codec]
     else:
-        command += ['-map', '0:v:0', '-map', '0:a:0?', '-sn']
-        command += (['-c:v', 'libvpx-vp9', '-c:a', 'libopus'] if target == 'webm'
-                    else ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac'])
+        command += ['-map', '0:V:0', '-map', '0:a:0?', '-sn', '-c:v', video_codec, '-c:a', audio_codec]
+        if target != 'webm':
+            command += ['-pix_fmt', 'yuv420p']
         # H.264 needs even dimensions; preserve aspect ratio with padding.
         if target != 'webm':
             command += ['-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2']

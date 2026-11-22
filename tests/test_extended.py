@@ -8,6 +8,7 @@ import wave
 import zipfile
 from pathlib import Path
 from fluxfile import Engine, compatible_targets
+from extended_formats import media_command
 
 class ExtendedTests(unittest.TestCase):
     def setUp(self):
@@ -137,6 +138,52 @@ class ExtendedTests(unittest.TestCase):
             out = self.root/('video.'+fmt)
             self.engine.convert(video,out)
             self.assertGreater(out.stat().st_size,0)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg tools unavailable")
+    def test_media_preflight_preserves_output_and_allows_audio_extraction(self):
+        video = self.root / "silent.mp4"
+        mixed = self.root / "with-audio.mp4"
+        output = self.root / "result.mp3"
+        subprocess.run([
+            "ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "color=s=32x32:d=1",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video),
+        ], check=True)
+        subprocess.run([
+            "ffmpeg", "-loglevel", "error", "-i", str(video),
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+            "-c:v", "copy", "-c:a", "aac", str(mixed),
+        ], check=True)
+        output.write_bytes(b"existing output")
+        with self.assertRaisesRegex(RuntimeError, "No audio stream"):
+            self.engine.convert(video, output)
+        self.assertEqual(output.read_bytes(), b"existing output")
+
+        self.engine._media_encoders = set()
+        with self.assertRaisesRegex(RuntimeError, "missing required encoder.*libmp3lame"):
+            self.engine.convert(mixed, output)
+        self.assertEqual(output.read_bytes(), b"existing output")
+
+        self.engine._media_encoders = None
+        self.assertEqual(self.engine.convert(mixed, output), "ffmpeg")
+        pcm = subprocess.check_output([
+            "ffmpeg", "-loglevel", "error", "-i", str(output), "-f", "s16le", "-",
+        ])
+        self.assertTrue(any(pcm))
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg tools unavailable")
+    def test_media_does_not_follow_http_playlist_references(self):
+        playlist = self.root / "playlist.m3u8"
+        playlist.write_text(
+            "#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\n"
+            "http://127.0.0.1:9/segment.ts\n#EXT-X-ENDLIST\n",
+            encoding="utf-8",
+        )
+        output = self.root / "audio.mp3"
+        with self.assertRaisesRegex(RuntimeError, "not on whitelist"):
+            self.engine._preflight_media(playlist, "mp3", None)
+        with self.assertRaisesRegex(RuntimeError, "not on whitelist"):
+            self.engine._run(media_command(self.engine.ffmpeg, playlist, output))
+        self.assertFalse(output.exists())
 
     def test_svg_local_render_and_external_reference_rejected(self):
         if not self.engine.capabilities()['cairosvg']: self.skipTest('CairoSVG unavailable')

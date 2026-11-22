@@ -1,10 +1,11 @@
 import importlib.util
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from fluxfile_core import find_external_engines
+from fluxfile_core import find_external_engines, which_any
 
 from fluxfile import (
     Engine,
@@ -42,6 +43,19 @@ class CoreTests(unittest.TestCase):
                 self.assertEqual(find_external_engines(), {
                     "ffmpeg": str(ffmpeg), "pandoc": str(pandoc), "libreoffice": str(soffice),
                 })
+
+    def test_windows_engine_lookup_ignores_relative_path_entries_and_batch_wrappers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            native = root / "ffmpeg.exe"
+            (root / "ffmpeg.bat").touch()
+            with (
+                patch("fluxfile_core.sys.platform", "win32"),
+                patch.dict("fluxfile_core.os.environ", {"PATH": os.pathsep.join([".", str(root)])}),
+            ):
+                self.assertIsNone(which_any("ffmpeg"))
+                native.touch()
+                self.assertEqual(which_any("ffmpeg"), str(native))
 
     def test_unavailable_media_route_identifies_ffmpeg(self):
         engine = Engine()
