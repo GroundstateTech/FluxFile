@@ -133,7 +133,8 @@ FluxFile supports useful conversions within compatible families; it does not pre
 - Multi-sheet workbooks preserve sheets when targeting XLSX/ODS; flat outputs such as CSV, PSV and NDJSON require a single sheet.
 - Table conversion extracts cell values and sheet names. XLSM exports omit macros, formulas, workbook formatting, and embedded objects.
 - PDF TXT/HTML export does not OCR scanned pages.
-- Media conversion uses the first video/audio stream; extra tracks and embedded subtitles are omitted.
+- Media conversion uses the first video stream excluding cover art, and the first audio stream. Extra tracks and embedded subtitles are omitted. Video-to-audio extraction remains available.
+- Before transcoding, FluxFile checks for required encoders and uses FFprobe, when available, to check for audio or video streams. FFmpeg and FFprobe media inputs use a file-only protocol allowlist. On Windows, engine lookup skips relative PATH entries and batch wrappers. The conversion engines run with the permissions of the current user.
 - Archive repacking rejects links, special files, duplicate/unsafe paths, more than 10,000 entries, and expanded content above 512 MiB.
 - SVG rendering rejects external resources and stylesheet imports.
 - Encrypted files, DRM, proprietary CAD, raw-camera workflows, and OCR remain outside the current scope.

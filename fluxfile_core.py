@@ -21,8 +21,10 @@ from extended_formats import (
     EXTRA_IMAGES,
     IMAGE_OUTPUTS,
     MEDIA_TARGETS,
+    MEDIA_INPUT_OPTIONS,
     VIDEO,
     convert_subtitles,
+    media_codecs,
     media_command,
     render_svg,
     repack_archive,
@@ -126,6 +128,20 @@ def safe_relative_dir(value: str | Path) -> str:
 
 
 def which_any(*names: str) -> str | None:
+    if sys.platform == "win32":
+        # Older Python Windows lookups can insert the working directory and
+        # allow batch wrappers. Resolve only native executables on explicit PATH.
+        directories = [
+            Path(entry.strip('"')) for entry in os.environ.get("PATH", "").split(os.pathsep)
+            if entry
+        ]
+        for name in names:
+            filename = name if Path(name).suffix else f"{name}.exe"
+            for directory in directories:
+                if directory.is_absolute() and (candidate := directory / filename).is_file():
+                    return str(candidate)
+        return None
+
     for name in names:
         found = shutil.which(name)
         if found:
@@ -399,6 +415,12 @@ class Engine:
     def __init__(self):
         engines = find_external_engines()
         self.ffmpeg = engines["ffmpeg"]
+        self.ffprobe = None
+        if self.ffmpeg:
+            probe_name = "ffprobe.exe" if sys.platform == "win32" else "ffprobe"
+            sibling = Path(self.ffmpeg).resolve().with_name(probe_name)
+            self.ffprobe = str(sibling) if sibling.is_file() else which_any("ffprobe")
+        self._media_encoders: set[str] | None = None
         self.pandoc = engines["pandoc"]
         self.libreoffice = engines["libreoffice"]
         try:
@@ -555,6 +577,7 @@ class Engine:
         if engine == "copy":
             shutil.copy2(source, output)
         elif engine == "ffmpeg":
+            self._preflight_media(source, normalize_format(output.suffix), cancel_event)
             self._run(media_command(self.ffmpeg, source, output), cancel_event)
         elif engine == "archive":
             repack_archive(source, output)
@@ -579,9 +602,43 @@ class Engine:
         else:
             raise RuntimeError(f"Unknown conversion engine: {engine}")
 
-    def _run(self, cmd: list[str], cancel_event: threading.Event | None = None) -> None:
+    def _preflight_media(self, source: Path, target: str, cancel_event: threading.Event | None) -> None:
+        video_codec, audio_codec = media_codecs(target)
+        has_audio = video_codec is None
+        if self.ffprobe:
+            info = self._run([
+                self.ffprobe, "-v", "error", *MEDIA_INPUT_OPTIONS, "-show_entries",
+                "stream=codec_type:stream_disposition=attached_pic", "-of", "json", str(source),
+            ], cancel_event, timeout=15)
+            streams = json.loads(info).get("streams", [])
+            has_audio = any(stream.get("codec_type") == "audio" for stream in streams)
+            has_video = any(
+                stream.get("codec_type") == "video" and not stream.get("disposition", {}).get("attached_pic")
+                for stream in streams
+            )
+            if video_codec and not has_video:
+                raise RuntimeError(f"No video stream found for .{target} output.")
+            if not video_codec and not has_audio:
+                raise RuntimeError(f"No audio stream found for .{target} output.")
+
+        if self._media_encoders is None:
+            listing = self._run([self.ffmpeg, "-hide_banner", "-encoders"], cancel_event, timeout=15)
+            self._media_encoders = set(re.findall(r"^\s*[AV][A-Z.]{5}\s+(\S+)", listing, re.MULTILINE))
+        required = {codec for codec in (video_codec, audio_codec if has_audio else None) if codec}
+        missing = required - self._media_encoders
+        if missing:
+            raise RuntimeError(f"FFmpeg is missing required encoder(s) for .{target}: {', '.join(sorted(missing))}.")
+
+    def _run(
+        self, cmd: list[str], cancel_event: threading.Event | None = None, *,
+        timeout: int = SUBPROCESS_TIMEOUT_SECONDS,
+    ) -> str:
+        if cancel_event and cancel_event.is_set():
+            raise ConversionCancelled("Conversion cancelled")
         started = time.monotonic()
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8", errors="replace",
+        )
         while True:
             try:
                 stdout, stderr = proc.communicate(timeout=0.2)
@@ -595,16 +652,17 @@ class Engine:
                         proc.kill()
                         proc.communicate()
                     raise ConversionCancelled("Conversion cancelled")
-                if time.monotonic() - started > SUBPROCESS_TIMEOUT_SECONDS:
+                if time.monotonic() - started > timeout:
                     proc.terminate()
                     try:
                         proc.communicate(timeout=2)
                     except subprocess.TimeoutExpired:
                         proc.kill()
                         proc.communicate()
-                    raise RuntimeError(f"Conversion timed out after {SUBPROCESS_TIMEOUT_SECONDS} seconds")
+                    raise RuntimeError(f"Conversion timed out after {timeout} seconds")
         if proc.returncode != 0:
             raise RuntimeError((stderr or stdout or "conversion failed").strip())
+        return stdout
 
     def _image(self, source: Path, output: Path) -> None:
         from PIL import Image, ImageOps
