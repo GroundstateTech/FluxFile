@@ -46,3 +46,55 @@ Wait for the source desktop app to pass on the Windows workstation and on muchat
 ```
 
 Test the entire `dist/FluxFile` folder on a clean Windows account before distribution. Include both appearance modes, queue recovery, PNG → QOI, XLSM → XLSX, and MP4 → MP3 with an installed FFmpeg. Confirm that external tools launch without opening console windows and that startup errors remain diagnosable. Generate the checksum from the final archive after those checks.
+
+## Microsoft Store release path
+
+Target Windows x64 MSIX first. Microsoft signs MSIX submissions for Store distribution.
+The Windows SDK tools still require a separate development signature and trusted
+certificate to install a local test copy.
+
+| Machine | Release check |
+| --- | --- |
+| Ubuntu workstation (muchateta) | Launch the source GUI and run the Linux checks above before compiling. |
+| Windows workstation | Launch the source GUI, run the checks above, and build the x64 one-folder app with the existing PyInstaller spec. Use a clean virtual environment and dist folder. |
+| Windows workstation (Windows SDK developer PowerShell) | Stage the full PyInstaller runtime into MSIX with the command below. |
+| Clean Windows x64 VM | Test-sign and install a test copy. Launch from the Start menu, confirm conversion and queue recovery, then test an in-place upgrade and uninstall. Run the Windows App Certification Kit. |
+
+Reserve the listing name and copy the package name, publisher ID, publisher display name,
+and reserved app name exactly from Partner Center. Use a four-part Store package
+version with a nonzero first part and zero final part. The MSIX package version
+can advance independently of the version shown inside FluxFile.
+
+```powershell
+$packageName = Read-Host 'Package identity name'
+$publisher = Read-Host 'Publisher ID'
+$publisherDisplayName = Read-Host 'Publisher display name'
+$appName = Read-Host 'Reserved app name'
+$packageVersion = Read-Host 'Four-part package version (e.g. 1.0.0.0)'
+.\.venv\Scripts\python.exe scripts\make_msix.py --name $packageName --publisher $publisher --publisher-display-name $publisherDisplayName --display-name $appName --version $packageVersion
+```
+
+If MakeAppx is outside PATH, add `--makeappx` with its full SDK path. The
+command writes an unsigned package to `dist/`. Retain that file for Store
+submission and sign a separate copy for VM testing. Packaged conversions
+default to `FluxFile\converted` in the user's home folder. The user can
+choose another output folder in the app.
+
+### Submission checks
+
+- Decide the project's license and the terms for distributing PyMuPDF/MuPDF
+  before uploading any binary. Upstream offers AGPL and commercial licensing.
+  Confirm the terms and notices for the resolved Python dependencies, native
+  libraries and any external engines selected for distribution.
+- FFmpeg, LibreOffice and Pandoc are separate installs under this recipe.
+  Verify engine discovery and conversion from the installed MSIX on the VM.
+  Include MP4 → MP3 with FFmpeg and check the missing-engine flow on a
+  clean VM. State these prerequisites in the Store listing.
+- Confirm how the installed app and its engines handle local files, queue
+  paths and recovery data. Prepare the listing screenshots, support contact
+  and privacy disclosures from the tested package.
+- Explain the `runFullTrust` capability during submission. The packaged
+  desktop app accesses user-selected files and launches installed converters.
+  After certification, use limited distribution before broad release.
+
+[Microsoft Store readiness checklist](https://learn.microsoft.com/en-us/windows/apps/publish/store-readiness-checklist) · [PyMuPDF licensing](https://pymupdf.readthedocs.io/en/latest/about.html#license-and-copyright)
