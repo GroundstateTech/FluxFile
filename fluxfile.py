@@ -55,6 +55,12 @@ FORMAT_GROUPS = (
 FORMAT_LABELS = {"any": "Any file type", "auto": "Automatic"}
 
 
+def default_output_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path.home() / "FluxFile" / "converted"
+    return Path.cwd() / "converted"
+
+
 def group_formats(formats: list[str]) -> list[tuple[str, list[str]]]:
     remaining = dict.fromkeys(formats)
     groups = []
@@ -78,7 +84,7 @@ class FluxFileApp(tk.Tk):
 
         self.engine = Engine()
         self.jobs: list[Job] = []
-        self.output_dir = tk.StringVar(value=str(Path.cwd() / "converted"))
+        self.output_dir = tk.StringVar(value=str(default_output_dir()))
         self.source_choice = tk.StringVar(value="any")
         self.target_choice = tk.StringVar(value="auto")
         self.conflict = tk.StringVar(value="suffix")
@@ -540,7 +546,7 @@ class FluxFileApp(tk.Tk):
     def _apply_loaded_queue(self, jobs: list[Job], settings: dict[str, object], label: str):
         self.jobs = jobs
         self.tree.delete(*self.tree.get_children())
-        self.output_dir.set(str(settings.get("output_dir") or (Path.cwd() / "converted")))
+        self.output_dir.set(str(settings.get("output_dir") or default_output_dir()))
         self.source_choice.set(settings.get("source_choice") if settings.get("source_choice") in SOURCE_FORMATS else "any")
         self.target_choice.set(settings.get("target_choice") if settings.get("target_choice") in ALL_TARGETS else "auto")
         self.conflict.set(settings.get("conflict") if settings.get("conflict") in {"suffix", "skip", "overwrite"} else "suffix")
