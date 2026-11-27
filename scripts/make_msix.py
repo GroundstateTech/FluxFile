@@ -70,6 +70,21 @@ def write_logos(stage: Path) -> None:
         image.save(assets / f"{name}.png")
 
 
+def copy_runtime(build: Path, stage: Path) -> None:
+    shutil.copy2(build / "FluxFile.exe", stage)
+    runtime = stage / "_internal"
+    shutil.copytree(build / "_internal", runtime)
+
+    templates = runtime / "docx" / "templates"
+    template_source = templates / "default-docx-template"
+    if template_source.is_dir():
+        # python-docx uses default.docx at runtime. The expanded template
+        # sources also contain OPC metadata paths that can fail MSIX packing.
+        if not (templates / "default.docx").is_file():
+            raise ValueError("The packaged python-docx runtime is missing its default.docx template.")
+        shutil.rmtree(template_source)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--name", required=True, help="Package identity name from Partner Center.")
@@ -96,8 +111,7 @@ def main() -> None:
             temp = Path(directory)
             stage = temp / "stage"
             stage.mkdir()
-            shutil.copy2(build / "FluxFile.exe", stage)
-            shutil.copytree(build / "_internal", stage / "_internal")
+            copy_runtime(build, stage)
             write_manifest(stage, args)
             write_logos(stage)
             package = temp / output.name
