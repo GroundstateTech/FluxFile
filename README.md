@@ -116,7 +116,7 @@ A synthetic 16-job scheduler benchmark during development measured about **4× t
 | Video | MP4, MKV, MOV, AVI, WebM, animated GIF; audio extraction. Also reads M2TS, MTS, 3GP and OGV | FFmpeg |
 | Images | PNG/JPG/BMP/GIF/TIFF/WebP plus ICO, ICNS, PPM, TGA, AVIF, QOI and JPEG 2000 (JP2) where supported | Pillow |
 | Vector | SVG → PNG / PDF | optional CairoSVG + Cairo |
-| PDF | DOCX, TXT, HTML; single-page PNG/JPG; all pages as TIFF | pdf2docx / PyMuPDF |
+| PDF | DOCX, TXT, HTML; single-page PNG/JPG; all pages as TIFF or individual images in ZIP | pdf2docx / PyMuPDF |
 | Data | CSV, TSV, PSV (pipe-separated), JSON, JSONL/NDJSON, XLS/XLSX, ODS; XLSM input | pandas / spreadsheet engines |
 | Documents | Markdown, HTML, DOCX, ODT, RTF, EPUB, TXT | Pandoc / LibreOffice |
 | Presentations | PPT/PPTX/ODP → supported office targets / PDF | LibreOffice |
@@ -125,12 +125,17 @@ A synthetic 16-job scheduler benchmark during development measured about **4× t
 
 FluxFile supports useful conversions within compatible families; it does not pretend every arbitrary file can become every other arbitrary format.
 
+Choose **CSV per sheet (ZIP)** to export every worksheet as a separate CSV.
+For a PDF, choose **PNG per page (ZIP)** or **JPG per page (ZIP)** to export
+the pages in order. Each queued workbook or PDF gets its own ZIP. In the
+CLI, use `--to csv.zip`, `--to png.zip`, or `--to jpg.zip`.
+
 ## Integrity boundaries
 
 - Failed conversions do not replace an existing destination; output is staged and atomically published after success.
 - Animated images preserve frames only in multi-frame-capable targets; destructive flattening is refused.
-- Multi-page PDF → PNG/JPG is refused; use TIFF to preserve all pages.
-- Multi-sheet workbooks preserve sheets when targeting XLSX/ODS; flat outputs such as CSV, PSV and NDJSON require a single sheet.
+- For multi-page PDFs, use TIFF or a ZIP of individual PNG/JPG images.
+- Multi-sheet workbooks preserve sheets when targeting XLSX/ODS; flat outputs such as CSV, PSV and NDJSON require a single sheet. Use CSV per sheet (ZIP) to export all sheets as CSV.
 - Table conversion extracts cell values and sheet names. XLSM exports omit macros, formulas, workbook formatting, and embedded objects.
 - PDF TXT/HTML export does not OCR scanned pages.
 - Media conversion uses the first video stream excluding cover art, and the first audio stream. Extra tracks and embedded subtitles are omitted. Video-to-audio extraction remains available.

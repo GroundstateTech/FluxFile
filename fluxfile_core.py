@@ -13,6 +13,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from extended_formats import (
     ARCHIVES,
@@ -38,6 +39,9 @@ SUBPROCESS_TIMEOUT_SECONDS = 300
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
 DELIMITED_TABLES = {".csv": ",", ".tsv": "\t", ".psv": "|"}
 TABLE_EXTS = {".json", ".jsonl", ".ndjson", ".xls", ".xlsx", ".xlsm", ".ods"} | DELIMITED_TABLES.keys()
+WORKBOOK_EXTS = {".xls", ".xlsx", ".xlsm", ".ods"}
+PDF_PAGE_ARCHIVES = {"png.zip", "jpg.zip"}
+EXPORT_ARCHIVES = {"csv.zip", *PDF_PAGE_ARCHIVES}
 DOCUMENT_EXTS = {".doc", ".docx", ".odt", ".rtf", ".md", ".markdown", ".html", ".htm", ".txt", ".epub"}
 PRESENTATION_EXTS = {".ppt", ".pptx", ".odp"}
 
@@ -72,7 +76,7 @@ PRESENTATION_TARGETS = ["pdf", "pptx", "odp"]
 IMAGE_EXTS |= {"." + fmt for fmt in EXTRA_IMAGES}
 IMAGE_TARGETS += IMAGE_OUTPUTS
 SOURCE_FORMATS += sorted(AUDIO | VIDEO | EXTRA_IMAGES | {"svg", "srt", "vtt", "jsonl", "ndjson"} | ARCHIVES)
-ALL_TARGETS += TABLE_TARGETS + AUDIO_TARGETS + MEDIA_TARGETS + IMAGE_OUTPUTS + ["srt", "vtt"] + sorted(ARCHIVES)
+ALL_TARGETS += TABLE_TARGETS + AUDIO_TARGETS + MEDIA_TARGETS + IMAGE_OUTPUTS + ["srt", "vtt"] + sorted(ARCHIVES | EXPORT_ARCHIVES)
 SOURCE_FORMATS = list(dict.fromkeys(SOURCE_FORMATS))
 ALL_TARGETS = list(dict.fromkeys(ALL_TARGETS))
 
@@ -264,7 +268,9 @@ def compatible_targets(fmt: str) -> list[str]:
         return ALL_TARGETS[:]
     if fmt in ARCHIVES:
         return ["auto", *sorted(ARCHIVES)]
-    if fmt in {"jsonl", "ndjson", "psv", "xlsm"}:
+    if fmt == "xlsm":
+        return ["auto", *TABLE_TARGETS, "csv.zip"]
+    if fmt in {"jsonl", "ndjson", "psv"}:
         return ["auto", *TABLE_TARGETS]
     if fmt in AUDIO:
         return ["auto", *AUDIO_TARGETS]
@@ -278,11 +284,11 @@ def compatible_targets(fmt: str) -> list[str]:
     if ext == ".json":
         return ["auto", *TABLE_TARGETS]
     if ext in TABLE_EXTS:
-        return ["auto", *TABLE_TARGETS, "pdf"]
+        return ["auto", *TABLE_TARGETS, "pdf", *(["csv.zip"] if ext in WORKBOOK_EXTS else [])]
     if ext in IMAGE_EXTS:
         return ["auto", *IMAGE_TARGETS]
     if fmt == "pdf":
-        return ["auto", "docx", "txt", "html", "png", "jpg", "tiff"]
+        return ["auto", "docx", "txt", "html", "png", "jpg", "tiff", *sorted(PDF_PAGE_ARCHIVES)]
     if ext in PRESENTATION_EXTS:
         return ["auto", *PRESENTATION_TARGETS]
     if ext in {".doc", ".rtf"}:
@@ -307,7 +313,7 @@ def resolve_output(
     the same destination before either file exists.
     """
     target = normalize_format(target)
-    if not re.fullmatch(r'[a-z0-9][a-z0-9_-]*', target):
+    if target not in EXPORT_ARCHIVES and not re.fullmatch(r'[a-z0-9][a-z0-9_-]*', target):
         raise ValueError('Target format must be a file extension, not a path.')
     reserved = reserved if reserved is not None else set()
     base = out_dir / f"{source_stem(source)}.{target}"
@@ -478,7 +484,7 @@ class Engine:
             engine = "cairosvg" if self._capabilities["cairosvg"] else None
         elif {src, dst} == {".srt", ".vtt"}:
             engine = "subtitles"
-        elif src == ".pdf" and dst in {".html", ".png", ".jpg", ".tiff"}:
+        elif src == ".pdf" and (dst in {".html", ".png", ".jpg", ".tiff"} or target_fmt in PDF_PAGE_ARCHIVES):
             engine = "pdf-export" if self._capabilities["pymupdf"] else None
         elif (
             src in IMAGE_EXTS
@@ -486,7 +492,7 @@ class Engine:
             and (src != ".jp2" or src in self._image_save_exts)
         ):
             engine = "pillow" if self._capabilities["pillow"] else None
-        elif src in TABLE_EXTS and target_fmt in TABLE_TARGETS:
+        elif (src in TABLE_EXTS and target_fmt in TABLE_TARGETS) or (src in WORKBOOK_EXTS and target_fmt == "csv.zip"):
             if (
                 self._capabilities["pandas"]
                 and self._table_backends.get(src, True)
@@ -540,12 +546,20 @@ class Engine:
         output.parent.mkdir(parents=True, exist_ok=True)
 
         src_fmt = source_format(source)
-        dst_fmt = normalize_format(output.suffix)
+        bundle_formats = PDF_PAGE_ARCHIVES if src_fmt == "pdf" else (
+            {"csv.zip"} if f".{src_fmt}" in WORKBOOK_EXTS else ()
+        )
+        dst_fmt = next(
+            (fmt for fmt in bundle_formats if output.name.lower().endswith(f".{fmt}")),
+            normalize_format(output.suffix),
+        )
         engine = self.engine_for(src_fmt, dst_fmt)
         if not engine:
             raise RuntimeError(self.unavailable_route(src_fmt, dst_fmt))
 
-        temp = output.parent / f".{output.stem}.fluxfile-{uuid.uuid4().hex[:10]}{output.suffix.lower()}"
+        suffix = f".{dst_fmt}" if dst_fmt in EXPORT_ARCHIVES else output.suffix.lower()
+        stem = output.name[:-len(suffix)] if suffix else output.name
+        temp = output.parent / f".{stem}.fluxfile-{uuid.uuid4().hex[:10]}{suffix}"
         previous_cancel_event = getattr(self._cancel_state, "event", None)
         self._cancel_state.event = cancel_event
         try:
@@ -719,6 +733,16 @@ class Engine:
             raise RuntimeError(f"Unsupported table source: {src}")
         if not sheets:
             raise RuntimeError("Spreadsheet source contains no readable sheets")
+        if output.name.lower().endswith(".csv.zip"):
+            cancel_event = getattr(self._cancel_state, "event", None)
+            with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
+                for index, (name, frame) in enumerate(sheets.items(), 1):
+                    if cancel_event and cancel_event.is_set():
+                        raise ConversionCancelled("Conversion cancelled")
+                    label = re.sub(r'[^\w .-]', '_', str(name)).strip(" .")[:80].rstrip(" .")
+                    with archive.open(f"{index:03d}-{label or 'Sheet'}.csv", "w") as member:
+                        frame.to_csv(member, index=False, encoding="utf-8")
+            return
         if dst in {".xlsx", ".ods"}:
             writer_engine = "odf" if dst == ".ods" else "openpyxl"
             used_names: set[str] = set()
@@ -742,7 +766,7 @@ class Engine:
         if len(sheets) > 1:
             raise RuntimeError(
                 f"Workbook contains {len(sheets)} sheets; converting to {dst} would discard data. "
-                "Choose .xlsx or .ods to preserve all sheets."
+                "Choose .csv.zip for one CSV per sheet, or .xlsx or .ods for a workbook."
             )
         df = next(iter(sheets.values()))
         if dst in DELIMITED_TABLES:
@@ -765,8 +789,26 @@ class Engine:
                     encoding="utf-8",
                 )
                 return
+            page_format = next(
+                (fmt for fmt in PDF_PAGE_ARCHIVES if output.name.lower().endswith(f".{fmt}")),
+                None,
+            )
+            if page_format:
+                if not len(doc):
+                    raise RuntimeError("PDF has no pages")
+                extension = page_format.split(".")[0]
+                cancel_event = getattr(self._cancel_state, "event", None)
+                with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
+                    for index, page in enumerate(doc, 1):
+                        if cancel_event and cancel_event.is_set():
+                            raise ConversionCancelled("Conversion cancelled")
+                        if page.rect.width * page.rect.height * 12 > 512 * 1024 * 1024:
+                            raise RuntimeError(f"PDF page {index} render exceeds 512 MiB")
+                        pix = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
+                        archive.writestr(f"page-{index:04d}.{extension}", pix.tobytes(extension))
+                return
             if len(doc) != 1 and output.suffix != ".tiff":
-                raise RuntimeError("Multi-page PDF: choose TIFF to preserve every page")
+                raise RuntimeError("Multi-page PDF: choose PNG or JPG per page (ZIP), or TIFF to preserve every page")
             from PIL import Image
             frames = []
             if sum(page.rect.width * page.rect.height * 12 for page in doc) > 512 * 1024 * 1024:

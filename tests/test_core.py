@@ -138,7 +138,10 @@ class CoreTests(unittest.TestCase):
         self.assertIn("pdf", targets)
 
     def test_pdf_matrix(self):
-        self.assertEqual(compatible_targets("pdf"), ["auto", "docx", "txt", "html", "png", "jpg", "tiff"])
+        self.assertEqual(
+            compatible_targets("pdf"),
+            ["auto", "docx", "txt", "html", "png", "jpg", "tiff", "jpg.zip", "png.zip"],
+        )
 
     def test_conflict_suffix(self):
         with tempfile.TemporaryDirectory() as td:

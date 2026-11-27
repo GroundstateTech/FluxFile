@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from zipfile import ZipFile
 
 from fluxfile import Engine
 
@@ -74,6 +75,42 @@ class ConversionSmokeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "would discard data"):
                 self.engine.convert(source, output)
             self.assertFalse(output.exists())
+
+    def test_whole_workbook_exports_one_csv_per_sheet(self):
+        import pandas as pd
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "book.xlsx"
+            output = root / "book.csv.zip"
+            with pd.ExcelWriter(source, engine="openpyxl") as writer:
+                pd.DataFrame({"value": [1]}).to_excel(writer, index=False, sheet_name="Alpha")
+                pd.DataFrame({"value": [2]}).to_excel(writer, index=False, sheet_name="Beta")
+            self.assertEqual(self.engine.convert(source, output), "pandas")
+            with ZipFile(output) as archive:
+                self.assertEqual(archive.namelist(), ["001-Alpha.csv", "002-Beta.csv"])
+                self.assertEqual(archive.read("001-Alpha.csv").splitlines(), [b"value", b"1"])
+                self.assertEqual(archive.read("002-Beta.csv").splitlines(), [b"value", b"2"])
+
+    def test_whole_pdf_exports_one_image_per_page(self):
+        import pymupdf
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "sample.pdf"
+            with pymupdf.open() as doc:
+                doc.new_page(width=100, height=100)
+                doc.new_page(width=200, height=100)
+                doc.save(source)
+            for extension in ("png", "jpg"):
+                with self.subTest(extension=extension):
+                    output = root / f"sample.{extension}.zip"
+                    self.assertEqual(self.engine.convert(source, output), "pdf-export")
+                    with ZipFile(output) as archive:
+                        names = [f"page-0001.{extension}", f"page-0002.{extension}"]
+                        self.assertEqual(archive.namelist(), names)
+                        one, two = (pymupdf.Pixmap(archive.read(name)) for name in names)
+                        self.assertEqual((one.width, two.width), (200, 400))
 
     def test_png_to_jpg(self):
         if not self.engine.capabilities()["pillow"]:
