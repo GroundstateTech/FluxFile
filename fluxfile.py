@@ -52,7 +52,13 @@ FORMAT_GROUPS = (
     ("Subtitles", {".srt", ".vtt"}),
     ("Archives", {"." + fmt for fmt in ARCHIVES}),
 )
-FORMAT_LABELS = {"any": "Any file type", "auto": "Automatic"}
+FORMAT_LABELS = {
+    "any": "Any file type",
+    "auto": "Automatic",
+    "csv.zip": "CSV per sheet (ZIP)",
+    "png.zip": "PNG per page (ZIP)",
+    "jpg.zip": "JPG per page (ZIP)",
+}
 
 
 def default_output_dir() -> Path:
@@ -375,7 +381,7 @@ class FluxFileApp(tk.Tk):
             submenu = tk.Menu(menu, tearoff=False)
             color_classic_widget(submenu, self._dark_mode)
             for fmt in choices:
-                submenu.add_radiobutton(label=f".{fmt}", variable=variable, value=fmt, command=on_select)
+                submenu.add_radiobutton(label=FORMAT_LABELS.get(fmt, f".{fmt}"), variable=variable, value=fmt, command=on_select)
             menu.add_cascade(label=label, menu=submenu)
         button.configure(menu=menu)
         if old_menu:
